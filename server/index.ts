@@ -17,6 +17,7 @@ import makeWASocket, {
     type WAMessage,
     type WAMessageUpdate,
     type WASocket,
+    WAMessageStubType,
 } from "baileys";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -27,7 +28,9 @@ import QRCode from "qrcode";
 import {
     contactDisplayName,
     contactSavedName,
+    createMetadataActivityMessage,
     isIdentifierLike,
+    jidToDisplayName,
     keySignature,
     normalizeMessageReaction,
     normalizeMessageReceipt,
@@ -192,6 +195,7 @@ class LocalWhatsAppService {
     private readonly rawMessages = new Map<string, WAMessage>();
     private readonly profilePictureRequests = new Set<string>();
     private readonly historyRequests = new Set<string>();
+    private readonly ownerAliases = new Set<string>();
 
     private snapshot: SessionSnapshot = {
         status: "idle",
@@ -209,7 +213,55 @@ class LocalWhatsAppService {
         private readonly config: AppConfig,
         private readonly hub: SseHub,
     ) {
+        this.loadOwnerIdentity();
         this.loadCache();
+    }
+
+    private loadOwnerIdentity(): void {
+        const credsPath = resolve(this.config.authDir, "creds.json");
+        if (!existsSync(credsPath)) {
+            return;
+        }
+
+        try {
+            const creds = JSON.parse(readFileSync(credsPath, "utf8")) as {
+                me?: {
+                    id?: string;
+                    lid?: string;
+                    name?: string;
+                };
+            };
+            this.rememberOwnerJid(creds.me?.id);
+            this.rememberOwnerJid(creds.me?.lid);
+            if (creds.me?.id && !this.snapshot.ownerJid) {
+                this.snapshot.ownerJid = stripDeviceSuffix(creds.me.id);
+            }
+            if (creds.me?.name && !this.snapshot.profileName) {
+                this.snapshot.profileName = creds.me.name;
+            }
+        } catch {
+            // Missing or stale credentials only affect display names before reconnect.
+        }
+    }
+
+    private rememberOwnerJid(value: string | null | undefined): void {
+        if (!value) {
+            return;
+        }
+
+        const jid = value.includes("@") ? stripDeviceSuffix(value) : normalizeInputJid(value);
+        if (jid) {
+            this.ownerAliases.add(jid);
+        }
+    }
+
+    private isOwnJid(value: string | null | undefined): boolean {
+        if (!value) {
+            return false;
+        }
+
+        const jid = value.includes("@") ? stripDeviceSuffix(value) : normalizeInputJid(value);
+        return Boolean(jid && (this.ownerAliases.has(jid) || stripDeviceSuffix(this.snapshot.ownerJid ?? "") === jid));
     }
 
     private loadCache(): void {
@@ -240,17 +292,22 @@ class LocalWhatsAppService {
                 }
             }
 
-            for (const chat of cache.chats ?? []) {
+            const fallbackPinnedJids = this.detectPinnedChatsFromCacheOrder(cache.chats ?? []);
+            for (const [chatIndex, chat] of (cache.chats ?? []).entries()) {
                 if (!chat.remoteJid) {
                     continue;
                 }
 
                 const jid = stripDeviceSuffix(chat.remoteJid);
+                const fallbackPinned = fallbackPinnedJids.has(jid);
                 const loadedChat = {
                     ...chat,
                     remoteJid: jid,
-                    timestamp: chat.timestamp ?? chat.lastMessage?.timestamp ?? 0,
-                    metadataTimestamp: chat.metadataTimestamp ?? chat.timestamp ?? chat.lastMessage?.timestamp ?? 0,
+                    timestamp: chat.timestamp ?? chat.lastActivity?.timestamp ?? chat.lastMessage?.timestamp ?? 0,
+                    metadataTimestamp: chat.metadataTimestamp ?? chat.timestamp ?? chat.lastActivity?.timestamp ?? chat.lastMessage?.timestamp ?? 0,
+                    pinned: Boolean(chat.pinned) || fallbackPinned,
+                    pinnedTimestamp: chat.pinnedTimestamp ?? (fallbackPinned ? Number.MAX_SAFE_INTEGER - chatIndex : undefined),
+                    pinnedRank: chat.pinnedRank ?? (fallbackPinned ? chatIndex : undefined),
                 };
                 this.applyChatName(loadedChat, this.displayNameForJid(jid, loadedChat.name), Boolean(this.savedContactNameForJid(jid)));
                 this.chats.set(jid, loadedChat);
@@ -287,7 +344,7 @@ class LocalWhatsAppService {
                         }
                         : message;
 
-                    unique.set(message.id, {
+                    const cachedMessage = this.normalizeCachedLegacyActivity({
                         ...hydratedMessage,
                         remoteJid: normalizedJid,
                         key: {
@@ -295,6 +352,8 @@ class LocalWhatsAppService {
                             remoteJid: normalizedJid,
                         },
                     });
+
+                    unique.set(message.id, cachedMessage);
                 }
 
                 const messages = [...unique.values()].sort((a, b) => a.timestamp - b.timestamp);
@@ -305,17 +364,39 @@ class LocalWhatsAppService {
                     }
                 }
 
-                const latest = messages[messages.length - 1];
-                if (latest) {
-                    const chat = this.ensureChat(normalizedJid);
-                    chat.lastMessage = latest;
-                    chat.timestamp = Math.max(chat.timestamp ?? 0, latest.timestamp);
-                    chat.metadataTimestamp = Math.max(chat.metadataTimestamp ?? 0, latest.timestamp);
-                }
+                this.updateChatActivity(normalizedJid);
             }
         } catch (error) {
             console.warn("Could not load local WhatsApp cache:", error instanceof Error ? error.message : error);
         }
+    }
+
+    private detectPinnedChatsFromCacheOrder(chats: LocalChatProjection[]): Set<string> {
+        const pinned = new Set<string>();
+        const candidates = chats.slice(0, 3);
+
+        for (const [index, chat] of candidates.entries()) {
+            const jid = stripDeviceSuffix(chat.remoteJid);
+            const timestamp = chat.lastActivity?.timestamp ?? chat.lastMessage?.timestamp ?? chat.timestamp ?? 0;
+            if (!jid || !timestamp) {
+                continue;
+            }
+
+            const hasNewerLaterChat = chats.slice(index + 1).some((later) => {
+                if (later.archived) {
+                    return false;
+                }
+
+                const laterTimestamp = later.lastActivity?.timestamp ?? later.lastMessage?.timestamp ?? later.timestamp ?? 0;
+                return laterTimestamp > timestamp;
+            });
+
+            if (hasNewerLaterChat) {
+                pinned.add(jid);
+            }
+        }
+
+        return pinned;
     }
 
     private queuePersist(): void {
@@ -347,6 +428,7 @@ class LocalWhatsAppService {
                 return {
                     ...rest,
                     lastMessage: chat.lastMessage ? stripMessageRaw(chat.lastMessage) : undefined,
+                    lastActivity: chat.lastActivity ? stripMessageRaw(chat.lastActivity) : undefined,
                 };
             };
 
@@ -398,10 +480,24 @@ class LocalWhatsAppService {
 
         for (const chat of sourceChats.slice(offset, offset + limit)) {
             this.queueProfilePictureFetch(chat.remoteJid);
+            if (this.needsGroupActivityTargetHydration(chat.lastActivity)) {
+                this.queueChatHistoryFetch(chat.remoteJid, chat.lastActivity);
+            }
         }
 
         const chats = sourceChats.map((chat) => normalizeLocalChat(chat));
-        chats.sort((a, b) => b.timestamp - a.timestamp);
+        chats.sort((a, b) => {
+            if (a.isPinned !== b.isPinned) {
+                return a.isPinned ? -1 : 1;
+            }
+
+            if (a.isPinned && b.isPinned) {
+                const rankDelta = (a.pinnedRank ?? Number.MAX_SAFE_INTEGER) - (b.pinnedRank ?? Number.MAX_SAFE_INTEGER);
+                return rankDelta || (b.pinnedTimestamp ?? 0) - (a.pinnedTimestamp ?? 0) || b.timestamp - a.timestamp;
+            }
+
+            return b.sortTimestamp - a.sortTimestamp || b.timestamp - a.timestamp;
+        });
         return {
             chats: chats.slice(offset, offset + limit),
             total: chats.length,
@@ -411,22 +507,32 @@ class LocalWhatsAppService {
     public listMessages(remoteJid: string, page: number, limit: number): { messages: NormalizedMessage[]; total: number } {
         const jid = normalizeInputJid(remoteJid);
         const chat = this.chats.get(jid);
-        const allMessages = [...(this.messages.get(jid) ?? [])]
+        const allMessages: NormalizedMessage[] = [...(this.messages.get(jid) ?? [])]
             .map((message) => withMessageReceipt({
                 ...message,
-                senderName: message.fromMe ? "me" : jid.endsWith("@g.us") ? this.displayNameForJid(message.participant ?? "", message.senderName) : chat?.name ?? this.displayNameForJid(jid, message.senderName),
+                senderName: message.fromMe ? "me" : jid.endsWith("@g.us") ? this.groupDisplayNameForJid(message.participant ?? "", message.senderName) : chat?.name ?? this.displayNameForJid(jid, message.senderName),
                 media: message.media ? {
                     ...message.media,
                     url: `/api/media/${encodeURIComponent(jid)}/${encodeURIComponent(message.id)}`,
                 } : undefined,
                 reactions: message.reactions?.map((reaction) => ({
                     ...reaction,
-                    senderName: reaction.fromMe ? "me" : this.displayNameForJid(reaction.senderJid ?? "", reaction.senderName),
+                    senderName: reaction.fromMe ? "me" : jid.endsWith("@g.us") ? this.groupDisplayNameForJid(reaction.senderJid ?? "", reaction.senderName) : this.displayNameForJid(reaction.senderJid ?? "", reaction.senderName),
                 })),
             }))
             .sort((a, b) => a.timestamp - b.timestamp);
+        const metadataActivity = chat ? createMetadataActivityMessage(chat) : undefined;
+        if (metadataActivity && !allMessages.some((message) => message.id === metadataActivity.id)) {
+            metadataActivity.senderName = jid.endsWith("@g.us") ? "Someone" : chat?.name ?? metadataActivity.senderName;
+            allMessages.push(metadataActivity);
+            allMessages.sort((a, b) => a.timestamp - b.timestamp);
+        }
         if (allMessages.some((message) => message.media && !this.rawMessages.has(keySignature(message.key)) && !message.raw)) {
             this.queueChatHistoryFetch(jid);
+        }
+        const activityNeedingTarget = allMessages.find((message) => this.needsGroupActivityTargetHydration(message));
+        if (activityNeedingTarget) {
+            this.queueChatHistoryFetch(jid, activityNeedingTarget);
         }
         const safeLimit = Math.max(1, Math.min(limit, 200));
         const end = Math.max(0, allMessages.length - (Math.max(1, page) - 1) * safeLimit);
@@ -752,6 +858,15 @@ class LocalWhatsAppService {
         socket.ev.on("chats.update", (chats) => {
             this.handleChats(chats);
         });
+        socket.ev.on("groups.upsert", (groups) => {
+            this.handleGroupsUpdate(groups, false);
+        });
+        socket.ev.on("groups.update", (groups) => {
+            this.handleGroupsUpdate(groups, true);
+        });
+        socket.ev.on("group-participants.update", (update) => {
+            this.handleGroupParticipantsUpdate(update);
+        });
         socket.ev.on("contacts.upsert", (contacts) => {
             this.handleContacts(contacts);
         });
@@ -770,7 +885,13 @@ class LocalWhatsAppService {
         socket.ev.on("messages.reaction", (updates) => {
             this.handleMessageReactions(updates);
         });
-        socket.ev.on("messages.delete", () => {
+        socket.ev.on("call", (updates) => {
+            this.handleCallUpdates(updates);
+        });
+        socket.ev.on("messages.delete", (update) => {
+            this.handleMessagesDelete(update);
+        });
+        socket.ev.on("messages.media-update", () => {
             this.publishMessagesChanged("messages.update");
         });
     }
@@ -796,6 +917,9 @@ class LocalWhatsAppService {
 
         if (update.connection === "open") {
             const ownerJid = this.socket?.user?.id ? stripDeviceSuffix(this.socket.user.id) : this.snapshot.ownerJid;
+            const ownerLid = (this.socket?.user as { lid?: string } | undefined)?.lid;
+            this.rememberOwnerJid(ownerJid);
+            this.rememberOwnerJid(ownerLid);
             const profileName = this.socket?.user?.name ?? this.socket?.user?.verifiedName ?? this.config.displayName;
             let profilePictureUrl: string | null = this.snapshot.profilePictureUrl;
 
@@ -905,6 +1029,7 @@ class LocalWhatsAppService {
                 displayName?: string;
                 lid?: string;
                 messages?: Array<{ message?: WAMessage } | WAMessage>;
+                pinned?: unknown;
                 subject?: string;
             };
             const savedName = this.savedContactNameForJid(jid);
@@ -916,6 +1041,13 @@ class LocalWhatsAppService {
                 timestampSeconds(chat.lastMessageRecvTimestamp),
             );
             existing.archived = typeof chat.archived === "boolean" ? chat.archived : existing.archived;
+            const pinValue = chatRecord.pinned ?? (chatRecord as { pin?: unknown }).pin;
+            if (pinValue !== undefined && pinValue !== null) {
+                const pinnedTimestamp = timestampSeconds(pinValue);
+                existing.pinned = pinnedTimestamp > 0 || pinValue === true || pinValue === 1;
+                existing.pinnedTimestamp = existing.pinned ? pinnedTimestamp || existing.pinnedTimestamp || Math.floor(Date.now() / 1000) : undefined;
+                existing.pinnedRank = existing.pinned ? existing.pinnedRank : undefined;
+            }
             existing.raw = {
                 ...existing.raw as object,
                 ...chat,
@@ -930,6 +1062,324 @@ class LocalWhatsAppService {
 
         this.queuePersist();
         this.hub.publish({ type: "messages.update", data: { chats: true } });
+    }
+
+    private handleGroupsUpdate(groups: Array<{
+        id?: string;
+        subject?: string;
+        desc?: string;
+        subjectTime?: number;
+        descTime?: number;
+        announce?: boolean;
+        restrict?: boolean;
+        memberAddMode?: boolean;
+        joinApprovalMode?: boolean;
+        author?: string;
+        authorPn?: string;
+    }>, synthesizeSettings: boolean): void {
+        let changed = false;
+
+        for (const group of groups) {
+            const jid = group.id ? stripDeviceSuffix(group.id) : "";
+            if (!jid) {
+                continue;
+            }
+
+            const chat = this.ensureChat(jid);
+            if (group.subject) {
+                this.applyChatName(chat, group.subject, true);
+            }
+            chat.raw = {
+                ...chat.raw as object,
+                ...group,
+                id: jid,
+            };
+
+            const actor = this.activityActor(group.author, group.authorPn);
+            if (group.subject && group.subjectTime) {
+                changed = this.saveGroupActivity({
+                    remoteJid: jid,
+                    actor,
+                    timestamp: timestampSeconds(group.subjectTime),
+                    text: `${actor.label} changed the group name to "${group.subject}"`,
+                    suffix: "subject",
+                }) || changed;
+            }
+
+            if (group.desc !== undefined && group.descTime) {
+                changed = this.saveGroupActivity({
+                    remoteJid: jid,
+                    actor,
+                    timestamp: timestampSeconds(group.descTime),
+                    text: group.desc ? `${actor.label} changed the group description` : `${actor.label} removed the group description`,
+                    suffix: "description",
+                }) || changed;
+            }
+
+            const settingText = synthesizeSettings ? this.groupSettingActivityText(group) : "";
+            if (settingText) {
+                changed = this.saveGroupActivity({
+                    remoteJid: jid,
+                    actor,
+                    timestamp: Math.floor(Date.now() / 1000),
+                    text: `${actor.label} ${settingText}`,
+                    suffix: `settings:${Object.keys(group).sort().join("-")}`,
+                }) || changed;
+            }
+
+            this.queueProfilePictureFetch(jid);
+        }
+
+        this.queuePersist();
+        if (changed) {
+            this.publishMessagesChanged("messages.upsert");
+            return;
+        }
+
+        this.hub.publish({ type: "messages.update", data: { chats: true } });
+    }
+
+    private handleGroupParticipantsUpdate(update: BaileysEventMap["group-participants.update"]): void {
+        const remoteJid = stripDeviceSuffix(update.id || "");
+        if (!remoteJid) {
+            return;
+        }
+
+        const participants = update.participants ?? [];
+        if (!participants.length) {
+            return;
+        }
+
+        this.handleContacts(participants);
+
+        const actor = this.activityActor(update.author, update.authorPn);
+        const participantNames = participants.map((participant) => this.participantDisplayName(participant));
+        const participantJids = participants.map((participant) => this.participantPrimaryJid(participant)).filter(Boolean);
+        const actorIsTarget = participantJids.some((jid) => jid === actor.jid);
+        const targets = this.formatNameList(participantNames);
+        const timestamp = Math.floor(Date.now() / 1000);
+
+        let text: string;
+        switch (update.action) {
+            case "add":
+                text = `${actor.label} added ${targets}`;
+                break;
+            case "remove":
+                text = actorIsTarget && participantNames.length === 1
+                    ? `${participantNames[0]} left`
+                    : `${actor.label} removed ${targets}`;
+                break;
+            case "promote":
+                text = `${actor.label} made ${targets} ${participantNames.length === 1 ? "an admin" : "admins"}`;
+                break;
+            case "demote":
+                text = `${actor.label} dismissed ${targets} as ${participantNames.length === 1 ? "admin" : "admins"}`;
+                break;
+            case "modify":
+            default:
+                text = `${actor.label} updated ${targets}`;
+                break;
+        }
+
+        const changed = this.saveGroupActivity({
+            remoteJid,
+            actor,
+            timestamp,
+            text,
+            suffix: `participants:${update.action}:${participantJids.join(",") || targets}`,
+            bumpChat: false,
+        });
+
+        this.queuePersist();
+        if (changed) {
+            this.publishMessagesChanged("messages.upsert");
+        }
+    }
+
+    private groupSettingActivityText(group: {
+        announce?: boolean;
+        restrict?: boolean;
+        memberAddMode?: boolean;
+        joinApprovalMode?: boolean;
+    }): string {
+        if (typeof group.announce === "boolean") {
+            return group.announce ? "changed the group so only admins can send messages" : "changed the group so everyone can send messages";
+        }
+
+        if (typeof group.restrict === "boolean") {
+            return group.restrict ? "changed the group so only admins can edit group info" : "changed the group so everyone can edit group info";
+        }
+
+        if (typeof group.memberAddMode === "boolean") {
+            return group.memberAddMode ? "allowed participants to add members" : "limited member adds to admins";
+        }
+
+        if (typeof group.joinApprovalMode === "boolean") {
+            return group.joinApprovalMode ? "turned on join approval" : "turned off join approval";
+        }
+
+        return "";
+    }
+
+    private activityActor(author?: string, authorPn?: string): { jid: string; label: string; senderName: string; fromMe: boolean } {
+        const ownerJid = this.snapshot.ownerJid ? stripDeviceSuffix(this.snapshot.ownerJid) : "";
+        const jid = stripDeviceSuffix(authorPn || author || "");
+        const fromMe = this.isOwnJid(jid) || Boolean(ownerJid && jid && ownerJid === jid);
+        const fallback = author && author !== jid ? this.groupDisplayNameForJid(stripDeviceSuffix(author)) : undefined;
+        const name = fromMe ? "me" : jid ? this.groupDisplayNameForJid(jid, fallback) : fallback ?? "Someone";
+
+        return {
+            jid,
+            label: fromMe ? "You" : name,
+            senderName: name,
+            fromMe,
+        };
+    }
+
+    private participantPrimaryJid(participant: Partial<Contact>): string {
+        return this.contactAliases(participant).find((alias) => alias.endsWith("@s.whatsapp.net"))
+            ?? this.contactAliases(participant)[0]
+            ?? "";
+    }
+
+    private participantDisplayName(participant: Partial<Contact>): string {
+        const jid = this.participantPrimaryJid(participant);
+        const fallback = contactDisplayName(participant, jid);
+        if (jid) {
+            return this.groupTargetDisplayNameForJid(jid, fallback);
+        }
+
+        return fallback && fallback !== "Unknown chat" ? fallback : "Someone";
+    }
+
+    private formatNameList(names: string[]): string {
+        const clean = names.filter(Boolean);
+        if (!clean.length) {
+            return "someone";
+        }
+
+        if (clean.length <= 2) {
+            return clean.join(" and ");
+        }
+
+        return `${clean.slice(0, 2).join(", ")} and ${clean.length - 2} others`;
+    }
+
+    private saveGroupActivity(options: {
+        remoteJid: string;
+        actor: { jid: string; senderName: string; fromMe: boolean };
+        timestamp: number;
+        text: string;
+        suffix: string;
+        bumpChat?: boolean;
+    }): boolean {
+        const timestamp = options.timestamp || Math.floor(Date.now() / 1000);
+        const id = `group-activity:${options.remoteJid}:${timestamp}:${options.suffix}`;
+        return this.saveSyntheticMessage({
+            id,
+            remoteJid: options.remoteJid,
+            fromMe: options.actor.fromMe,
+            senderName: options.actor.senderName,
+            participant: options.actor.jid || undefined,
+            type: "Group activity",
+            text: options.text,
+            timestamp,
+            timeLabel: new Intl.DateTimeFormat("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+            }).format(new Date(timestamp * 1000)),
+            key: {
+                id,
+                remoteJid: options.remoteJid,
+                fromMe: options.actor.fromMe,
+                participant: options.actor.jid || undefined,
+            },
+            activityOnly: true,
+            bumpChat: options.bumpChat === true,
+        });
+    }
+
+    private stubParameterDisplayName(value: string | undefined): string {
+        if (!value) {
+            return "someone";
+        }
+
+        if (!value.includes("@") && !/^\+?\d[\d\s().-]{5,}$/.test(value)) {
+            return value;
+        }
+
+        if (!value.includes("@")) {
+            return "a participant";
+        }
+
+        const jid = stripDeviceSuffix(value);
+        return this.groupTargetDisplayNameForJid(jid);
+    }
+
+    private hydrateStubActivityText(message: NormalizedMessage, raw: WAMessage): void {
+        const stubType = raw.messageStubType;
+        if (stubType === undefined || stubType === null) {
+            return;
+        }
+
+        const parameters = raw.messageStubParameters ?? [];
+        const targets = this.formatNameList(parameters.map((parameter: string) => this.stubParameterDisplayName(parameter)));
+        const actor = message.fromMe ? "You" : this.groupDisplayNameForJid(message.participant ?? "", message.senderName);
+
+        switch (stubType) {
+            case WAMessageStubType.GROUP_CREATE:
+                message.text = `${actor} created the group`;
+                break;
+            case WAMessageStubType.GROUP_CHANGE_SUBJECT:
+                message.text = `${actor} changed the group name${parameters[0] ? ` to "${parameters[0]}"` : ""}`;
+                break;
+            case WAMessageStubType.GROUP_CHANGE_ICON:
+                message.text = `${actor} changed the group icon`;
+                break;
+            case WAMessageStubType.GROUP_CHANGE_INVITE_LINK:
+                message.text = `${actor} reset the group invite link`;
+                break;
+            case WAMessageStubType.GROUP_CHANGE_DESCRIPTION:
+                message.text = `${actor} changed the group description`;
+                break;
+            case WAMessageStubType.GROUP_CHANGE_RESTRICT:
+            case WAMessageStubType.GROUP_CHANGE_ANNOUNCE:
+                message.text = `${actor} changed the group settings`;
+                break;
+            case WAMessageStubType.GROUP_PARTICIPANT_ADD:
+            case WAMessageStubType.GROUP_PARTICIPANT_INVITE:
+                message.text = `${actor} added ${targets}`;
+                message.bumpChat = false;
+                break;
+            case WAMessageStubType.GROUP_PARTICIPANT_REMOVE:
+                message.text = `${actor} removed ${targets}`;
+                message.bumpChat = false;
+                break;
+            case WAMessageStubType.GROUP_PARTICIPANT_LEAVE:
+                message.text = `${targets} left`;
+                message.bumpChat = false;
+                break;
+            case WAMessageStubType.GROUP_PARTICIPANT_PROMOTE:
+                message.text = `${actor} made ${targets} ${parameters.length === 1 ? "an admin" : "admins"}`;
+                message.bumpChat = false;
+                break;
+            case WAMessageStubType.GROUP_PARTICIPANT_DEMOTE:
+                message.text = `${actor} dismissed ${targets} as ${parameters.length === 1 ? "admin" : "admins"}`;
+                message.bumpChat = false;
+                break;
+            case WAMessageStubType.GROUP_PARTICIPANT_CHANGE_NUMBER:
+                message.text = `${this.stubParameterDisplayName(parameters[0])} changed their phone number`;
+                message.bumpChat = false;
+                break;
+            case WAMessageStubType.GROUP_PARTICIPANT_ACCEPT:
+            case WAMessageStubType.GROUP_PARTICIPANT_LINKED_GROUP_JOIN:
+            case WAMessageStubType.GROUP_PARTICIPANT_JOINED_GROUP_AND_PARENT_GROUP:
+                message.text = `${targets} joined`;
+                message.bumpChat = false;
+                break;
+            default:
+                break;
+        }
     }
 
     private handleMessagesUpsert(messages: WAMessage[], type: "append" | "notify"): void {
@@ -950,10 +1400,46 @@ class LocalWhatsAppService {
 
             const list = this.messages.get(jid);
             const message = list?.find((item) => item.id === messageId);
+            const signature = keySignature({ id: messageId, remoteJid: jid, fromMe: Boolean(update.key.fromMe) });
+            const raw = this.rawMessages.get(signature);
+
+            if (update.update.message !== undefined) {
+                const mergedRaw = {
+                    ...(raw ?? {}),
+                    ...update.update,
+                    key: {
+                        ...(raw?.key ?? {}),
+                        ...update.key,
+                        remoteJid: jid,
+                    },
+                } as WAMessage;
+                const normalized = normalizeWAMessage(mergedRaw, this.snapshot.ownerJid ?? "");
+                if (normalized) {
+                    if (!normalized.fromMe) {
+                        const senderJid = normalized.participant ?? normalized.remoteJid;
+                        normalized.senderName = normalized.remoteJid.endsWith("@g.us")
+                            ? this.groupDisplayNameForJid(senderJid, normalized.senderName)
+                            : this.displayNameForJid(senderJid, normalized.senderName);
+                    }
+                    this.hydrateStubActivityText(normalized, mergedRaw);
+
+                    this.rawMessages.set(keySignature(normalized.key), mergedRaw);
+                    if (message) {
+                        Object.assign(message, {
+                            ...message,
+                            ...normalized,
+                            reactions: message.reactions ?? normalized.reactions,
+                            receipt: normalized.receipt ?? message.receipt,
+                        });
+                    } else {
+                        this.saveRawMessage(mergedRaw, false);
+                    }
+                    this.updateChatActivity(jid);
+                }
+            }
+
             if (message && update.update.status !== undefined) {
                 const status = update.update.status === null ? undefined : String(update.update.status);
-                const signature = keySignature({ id: messageId, remoteJid: jid, fromMe: Boolean(update.key.fromMe) });
-                const raw = this.rawMessages.get(signature);
                 if (raw) {
                     raw.status = update.update.status;
                     message.raw = raw;
@@ -961,6 +1447,44 @@ class LocalWhatsAppService {
                 message.status = status;
                 message.receipt = normalizeMessageReceipt(status, raw ?? message.raw, message.fromMe, jid);
             }
+        }
+
+        this.queuePersist();
+        this.publishMessagesChanged("messages.update");
+    }
+
+    private handleMessagesDelete(update: BaileysEventMap["messages.delete"]): void {
+        const keys = "keys" in update
+            ? update.keys
+            : (this.messages.get(stripDeviceSuffix(update.jid)) ?? []).map((message) => message.key);
+
+        let changed = false;
+        for (const key of keys) {
+            const jid = key.remoteJid ? stripDeviceSuffix(key.remoteJid) : "";
+            const messageId = key.id ?? "";
+            if (!jid || !messageId) {
+                continue;
+            }
+
+            const list = this.messages.get(jid);
+            const message = list?.find((item) => item.id === messageId);
+            if (!message) {
+                continue;
+            }
+
+            message.type = "Deleted message";
+            message.text = message.fromMe ? "You deleted this message" : "This message was deleted";
+            message.media = undefined;
+            message.forwarded = undefined;
+            message.forwardingScore = undefined;
+            message.reactions = undefined;
+            this.rawMessages.delete(keySignature(message.key));
+            this.updateChatActivity(jid);
+            changed = true;
+        }
+
+        if (!changed) {
+            return;
         }
 
         this.queuePersist();
@@ -1014,6 +1538,51 @@ class LocalWhatsAppService {
         this.publishMessagesChanged("messages.update");
     }
 
+    private handleCallUpdates(updates: BaileysEventMap["call"]): void {
+        let changed = false;
+        for (const update of updates) {
+            const remoteJid = stripDeviceSuffix(update.chatId || update.groupJid || update.from || "");
+            if (!remoteJid || remoteJid === "status@broadcast") {
+                continue;
+            }
+
+        const timestamp = Math.max(1, Math.floor(update.date.getTime() / 1000));
+            const callerJid = stripDeviceSuffix(update.from || "");
+            const fromMe = this.isOwnJid(callerJid);
+            const type = update.isVideo ? "Video call" : "Voice call";
+            const statusText = update.status === "reject"
+                ? `Missed ${type.toLowerCase()}`
+                : type;
+
+            changed = this.saveSyntheticMessage({
+                id: `call:${update.id || remoteJid}:${timestamp}`,
+                remoteJid,
+                fromMe,
+                senderName: fromMe ? "me" : this.displayNameForJid(callerJid || remoteJid),
+                type,
+                text: statusText,
+                timestamp,
+                timeLabel: new Intl.DateTimeFormat("en-US", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                }).format(update.date),
+                key: {
+                    id: `call:${update.id || timestamp}`,
+                    remoteJid,
+                    fromMe,
+                },
+                activityOnly: true,
+            }) || changed;
+        }
+
+        if (!changed) {
+            return;
+        }
+
+        this.queuePersist();
+        this.publishMessagesChanged("messages.upsert");
+    }
+
     private applyReactionMessage(raw: WAMessage): boolean {
         const reactionMessage = raw.message?.reactionMessage;
         if (!reactionMessage?.key) {
@@ -1049,7 +1618,9 @@ class LocalWhatsAppService {
         } else {
             normalized.senderName = normalized.fromMe
                 ? "me"
-                : this.displayNameForJid(normalized.senderJid ?? "", normalized.senderName);
+                : jid.endsWith("@g.us")
+                  ? this.groupDisplayNameForJid(normalized.senderJid ?? "", normalized.senderName)
+                  : this.displayNameForJid(normalized.senderJid ?? "", normalized.senderName);
 
             const index = existing.findIndex((item) => this.normalizedReactionActorSignature(item) === actor);
             message.reactions = index >= 0
@@ -1100,6 +1671,177 @@ class LocalWhatsAppService {
         return [...merged.values()];
     }
 
+    private normalizeCachedLegacyActivity(message: NormalizedMessage): NormalizedMessage {
+        if (message.raw || !message.activityOnly || message.type !== "Group activity") {
+            return message;
+        }
+
+        const text = message.text.trim();
+        const actorWasIncorrectlyMe = message.fromMe && message.participant && !this.isOwnJid(message.participant);
+        const actorName = actorWasIncorrectlyMe || (!message.fromMe && message.participant)
+            ? this.groupDisplayNameForJid(message.participant ?? "", message.senderName === "me" ? undefined : message.senderName)
+            : message.fromMe
+              ? "You"
+              : message.senderName || "Someone";
+        const safeActorName = isIdentifierLike(actorName) || actorName === "WhatsApp user" ? "Someone" : actorName;
+
+        if (/^You added /i.test(text)) {
+            return {
+                ...message,
+                fromMe: false,
+                senderName: "Someone",
+                text: "Someone added a participant",
+                bumpChat: false,
+                key: {
+                    ...message.key,
+                    fromMe: false,
+                },
+            };
+        }
+
+        if (/^\+?[\d\s().-]{7,}\s+joined$/i.test(text) || /^WhatsApp user joined$/i.test(text)) {
+            return {
+                ...message,
+                fromMe: false,
+                senderName: "Someone",
+                text: "A participant joined",
+                bumpChat: false,
+                key: {
+                    ...message.key,
+                    fromMe: false,
+                    participant: undefined,
+                },
+                participant: undefined,
+            };
+        }
+
+        if (/^You removed /i.test(text)) {
+            return {
+                ...message,
+                fromMe: !actorWasIncorrectlyMe && message.fromMe,
+                senderName: actorWasIncorrectlyMe ? safeActorName : message.senderName,
+                text: `${actorWasIncorrectlyMe ? safeActorName : "You"} removed WhatsApp user`,
+                bumpChat: false,
+                key: {
+                    ...message.key,
+                    fromMe: !actorWasIncorrectlyMe && message.key.fromMe,
+                },
+            };
+        }
+
+        if (/^Someone removed /i.test(text) && message.participant && safeActorName !== "Someone") {
+            return {
+                ...message,
+                fromMe: false,
+                senderName: safeActorName,
+                text: `${safeActorName} removed WhatsApp user`,
+                bumpChat: false,
+                key: {
+                    ...message.key,
+                    fromMe: false,
+                    participant: message.participant,
+                },
+            };
+        }
+
+        if (/\bremoved a participant$/i.test(text)) {
+            const actorLabel = message.fromMe
+                ? "You"
+                : safeActorName !== "Someone"
+                  ? safeActorName
+                  : text.replace(/\s+removed a participant$/i, "").trim() || "Someone";
+            return {
+                ...message,
+                senderName: actorLabel === "You" ? message.senderName : actorLabel,
+                text: `${actorLabel} removed WhatsApp user`,
+                bumpChat: false,
+            };
+        }
+
+        if (/\sadded\s\+?[\d\s().-]{7,}$/i.test(text)) {
+            return {
+                ...message,
+                text: text.replace(/\+?[\d\s().-]{7,}$/i, "a participant"),
+                bumpChat: false,
+            };
+        }
+
+        if (/\bchanged their phone number$/i.test(text)) {
+            return {
+                ...message,
+                bumpChat: false,
+            };
+        }
+
+        if (message.activityOnly && message.type === "Group activity") {
+            return {
+                ...message,
+                bumpChat: false,
+            };
+        }
+
+        return message;
+    }
+
+    private saveSyntheticMessage(message: NormalizedMessage): boolean {
+        const jid = stripDeviceSuffix(message.remoteJid);
+        if (!jid || !message.id) {
+            return false;
+        }
+
+        const normalized: NormalizedMessage = {
+            ...message,
+            remoteJid: jid,
+            key: {
+                ...message.key,
+                remoteJid: jid,
+            },
+            timeLabel: message.timeLabel || new Intl.DateTimeFormat("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+            }).format(new Date(message.timestamp * 1000)),
+        };
+
+        const current = this.messages.get(jid) ?? [];
+        const existingIndex = current.findIndex((item) => item.id === normalized.id);
+        if (existingIndex >= 0) {
+            current[existingIndex] = {
+                ...current[existingIndex],
+                ...normalized,
+            };
+        } else {
+            current.push(normalized);
+        }
+        current.sort((a, b) => a.timestamp - b.timestamp);
+        this.messages.set(jid, current);
+
+        this.updateChatActivity(jid);
+        this.queueProfilePictureFetch(jid);
+        return true;
+    }
+
+    private updateChatActivity(remoteJid: string): void {
+        const jid = stripDeviceSuffix(remoteJid);
+        if (!jid) {
+            return;
+        }
+
+        const chat = this.ensureChat(jid);
+        const current = [...(this.messages.get(jid) ?? [])].sort((a, b) => a.timestamp - b.timestamp);
+        const latestActivity = current[current.length - 1];
+        const latestMessage = [...current].reverse().find((message) => !message.activityOnly);
+
+        if (latestMessage) {
+            chat.lastMessage = latestMessage;
+        }
+
+        if (latestActivity) {
+            chat.lastActivity = latestActivity;
+            chat.timestamp = Math.max(chat.timestamp ?? 0, latestActivity.timestamp);
+            chat.metadataTimestamp = Math.max(chat.metadataTimestamp ?? 0, latestActivity.timestamp);
+        }
+    }
+
     private mergeUserReceipts(existing: WAMessage["userReceipt"] | null | undefined, incoming: NonNullable<WAMessage["userReceipt"]>): NonNullable<WAMessage["userReceipt"]> {
         const merged = new Map<string, NonNullable<WAMessage["userReceipt"]>[number]>();
         for (const receipt of existing ?? []) {
@@ -1135,8 +1877,11 @@ class LocalWhatsAppService {
 
         if (!normalized.fromMe) {
             const senderJid = normalized.participant ?? normalized.remoteJid;
-            normalized.senderName = this.displayNameForJid(senderJid, normalized.senderName);
+            normalized.senderName = normalized.remoteJid.endsWith("@g.us")
+                ? this.groupDisplayNameForJid(senderJid, normalized.senderName)
+                : this.displayNameForJid(senderJid, normalized.senderName);
         }
+        this.hydrateStubActivityText(normalized, raw);
 
         this.coldHistoryRetryStarted = false;
         this.rawMessages.set(keySignature(normalized.key), raw);
@@ -1155,13 +1900,11 @@ class LocalWhatsAppService {
         this.messages.set(normalized.remoteJid, current);
 
         const chat = this.ensureChat(normalized.remoteJid);
-        const latest = current[current.length - 1] ?? normalized;
-        chat.lastMessage = latest;
-        chat.timestamp = Math.max(chat.timestamp ?? 0, latest.timestamp, normalized.timestamp);
-        chat.metadataTimestamp = Math.max(chat.metadataTimestamp ?? 0, latest.timestamp, normalized.timestamp);
+        this.updateChatActivity(normalized.remoteJid);
         if (!normalized.remoteJid.endsWith("@g.us")) {
             const savedName = this.savedContactNameForJid(normalized.remoteJid);
-            this.applyChatName(chat, savedName ?? (latest.fromMe ? undefined : latest.senderName), Boolean(savedName));
+            const latestMessage = chat.lastMessage ?? normalized;
+            this.applyChatName(chat, savedName ?? (latestMessage.fromMe ? undefined : latestMessage.senderName), Boolean(savedName));
         }
         this.queueProfilePictureFetch(normalized.remoteJid);
         if (inserted && countUnread && !normalized.fromMe) {
@@ -1225,15 +1968,80 @@ class LocalWhatsAppService {
         return contactSavedName(this.contactForJid(jid));
     }
 
+    private displayNameCandidate(value: unknown): string | undefined {
+        const text = String(value ?? "").trim();
+        return text
+            && !isIdentifierLike(text)
+            && text !== "WhatsApp user"
+            && text !== "Unknown chat"
+            && text !== "Someone"
+            && text !== "a participant"
+            ? text
+            : undefined;
+    }
+
+    private groupDisplayNameForJid(jid: string, fallback?: string): string {
+        const contact = this.contactForJid(jid);
+        const record = contact as (Contact & {
+            displayName?: string;
+            pushName?: string;
+            notify?: string;
+        }) | undefined;
+        const candidates = [
+            contactSavedName(contact),
+            record?.notify,
+            record?.pushName,
+            record?.verifiedName,
+            record?.displayName,
+            record?.name,
+            fallback,
+        ];
+
+        return candidates.map((candidate) => this.displayNameCandidate(candidate)).find(Boolean) ?? "Someone";
+    }
+
+    private groupTargetDisplayNameForJid(jid: string, fallback?: string): string {
+        const normalizedJid = stripDeviceSuffix(jid);
+        const groupName = this.groupDisplayNameForJid(normalizedJid, fallback);
+        if (groupName !== "Someone") {
+            return groupName;
+        }
+
+        if (normalizedJid.endsWith("@s.whatsapp.net")) {
+            return this.displayNameForJid(normalizedJid, fallback);
+        }
+
+        if (normalizedJid.endsWith("@lid")) {
+            return "WhatsApp user";
+        }
+
+        const fallbackName = this.displayNameCandidate(fallback);
+        return fallbackName ?? "a participant";
+    }
+
     private displayNameForJid(jid: string, fallback?: string): string {
+        const normalizedJid = stripDeviceSuffix(jid);
         const contact = this.contactForJid(jid);
         const savedName = contactSavedName(contact);
         if (savedName) {
             return savedName;
         }
 
-        const candidate = fallback && !isIdentifierLike(fallback) ? fallback : undefined;
-        return candidate ?? contactDisplayName(contact, jid);
+        const candidate = this.displayNameCandidate(fallback);
+        if (candidate) {
+            return candidate;
+        }
+
+        const phoneNumber = typeof contact?.phoneNumber === "string" ? stripDeviceSuffix(contact.phoneNumber) : "";
+        if (phoneNumber) {
+            return jidToDisplayName(phoneNumber);
+        }
+
+        if (normalizedJid.endsWith("@s.whatsapp.net")) {
+            return jidToDisplayName(normalizedJid);
+        }
+
+        return contactDisplayName(contact, jid);
     }
 
     private contactAliases(contact: Partial<Contact>): string[] {
@@ -1313,14 +2121,25 @@ class LocalWhatsAppService {
             });
     }
 
-    private queueChatHistoryFetch(remoteJid: string): void {
+    private needsGroupActivityTargetHydration(message: NormalizedMessage | undefined): boolean {
+        if (!message?.activityOnly || message.type !== "Group activity" || message.raw) {
+            return false;
+        }
+
+        return /\b(added|removed|made|dismissed|updated)\s+(a participant|WhatsApp user)\b/i.test(message.text);
+    }
+
+    private queueChatHistoryFetch(remoteJid: string, preferredAnchor?: NormalizedMessage): void {
         const jid = stripDeviceSuffix(remoteJid);
         if (!jid || this.historyRequests.has(jid) || !this.socket || this.snapshot.status !== "open") {
             return;
         }
 
         const messages = [...(this.messages.get(jid) ?? [])].sort((a, b) => b.timestamp - a.timestamp);
-        const anchor = messages.find((message) => message.id && message.timestamp);
+        const anchor = preferredAnchor?.id && preferredAnchor.timestamp
+            ? preferredAnchor
+            : messages.find((message) => this.needsGroupActivityTargetHydration(message) && message.id && message.timestamp)
+              ?? messages.find((message) => message.id && message.timestamp);
         if (!anchor) {
             return;
         }

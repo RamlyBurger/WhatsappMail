@@ -56,6 +56,8 @@ export interface WhatsAppMessage {
     reactions?: WhatsAppReaction[];
     forwarded?: boolean;
     forwardingScore?: number;
+    activityOnly?: boolean;
+    bumpChat?: boolean;
 }
 
 export interface WhatsAppChatRow {
@@ -65,12 +67,17 @@ export interface WhatsAppChatRow {
     subject: string;
     snippet: string;
     timestamp: number;
+    sortTimestamp: number;
     timeLabel: string;
     unreadCount: number;
     isGroup: boolean;
     isSaved: boolean;
+    isPinned?: boolean;
+    pinnedTimestamp?: number;
+    pinnedRank?: number;
     profilePicUrl?: string;
     lastMessage?: WhatsAppMessage;
+    lastActivity?: WhatsAppMessage;
 }
 
 export interface ProxyHealth {

@@ -1,6 +1,7 @@
 import {
     getContentType,
     normalizeMessageContent,
+    WAMessageStubType,
     type Chat,
     type Contact,
     type proto,
@@ -59,6 +60,8 @@ export interface NormalizedMessage {
     reactions?: WhatsAppReaction[];
     forwarded?: boolean;
     forwardingScore?: number;
+    activityOnly?: boolean;
+    bumpChat?: boolean;
     raw?: unknown;
 }
 
@@ -69,12 +72,17 @@ export interface NormalizedChat {
     subject: string;
     snippet: string;
     timestamp: number;
+    sortTimestamp: number;
     timeLabel: string;
     unreadCount: number;
     isGroup: boolean;
     isSaved: boolean;
+    isPinned?: boolean;
+    pinnedTimestamp?: number;
+    pinnedRank?: number;
     profilePicUrl?: string;
     lastMessage?: NormalizedMessage;
+    lastActivity?: NormalizedMessage;
     raw?: unknown;
 }
 
@@ -85,8 +93,12 @@ export interface LocalChatProjection {
     timestamp?: number;
     metadataTimestamp?: number;
     archived?: boolean;
+    pinned?: boolean;
+    pinnedTimestamp?: number;
+    pinnedRank?: number;
     profilePicUrl?: string;
     lastMessage?: NormalizedMessage;
+    lastActivity?: NormalizedMessage;
     raw?: unknown;
 }
 
@@ -164,7 +176,11 @@ export function jidToDisplayName(remoteJid: string): string {
         return base;
     }
 
-    return base.replace(/^(\d{1,3})(\d{3,})(\d{4})$/, "+$1 $2 $3");
+    if (remoteJid.endsWith("@lid")) {
+        return "WhatsApp user";
+    }
+
+    return /^\d+$/.test(base) ? `+${base}` : base;
 }
 
 export function isIdentifierLike(value: string | undefined | null): boolean {
@@ -203,7 +219,7 @@ export function formatTimeLabel(timestamp: number): string {
     }).format(date);
 }
 
-export function timestampSeconds(value: WAMessage["messageTimestamp"] | Chat["conversationTimestamp"] | number | undefined): number {
+export function timestampSeconds(value: unknown): number {
     const numeric = asNumber(value, 0);
     return numeric > 10_000_000_000 ? Math.floor(numeric / 1000) : numeric;
 }
@@ -311,9 +327,21 @@ export function withMessageReceipt<T extends NormalizedMessage>(message: T): T {
     };
 }
 
+function withActivityBumpState<T extends NormalizedMessage>(message: T): T {
+    if (message.activityOnly && message.type === "Group activity" && message.bumpChat !== false) {
+        return {
+            ...message,
+            bumpChat: false,
+        } as T;
+    }
+
+    return message;
+}
+
 export function contactDisplayName(contact: Partial<Contact> | undefined, fallbackJid: string): string {
     const record = asRecord(contact);
-    return asString(record.name || record.verifiedName || record.notify || record.pushName, jidToDisplayName(fallbackJid));
+    const phoneNumber = asString(record.phoneNumber);
+    return asString(record.name || record.verifiedName || record.notify || record.pushName, phoneNumber ? jidToDisplayName(phoneNumber) : jidToDisplayName(fallbackJid));
 }
 
 export function contactSavedName(contact: Partial<Contact> | undefined): string | undefined {
@@ -479,17 +507,222 @@ function extractMessageText(contentType: string, content: UnknownRecord): { text
     }
 
     if (contentType === "locationMessage") {
-        return { text: "Location", subject: "Location" };
+        const label = asString(content.name || content.address);
+        return { text: label || "Location", subject: "Location" };
+    }
+
+    if (contentType === "liveLocationMessage") {
+        const label = asString(content.caption || content.name || content.address);
+        return { text: label || "Live location", subject: "Live location" };
     }
 
     if (contentType === "contactMessage" || contentType === "contactsArrayMessage") {
-        return { text: "Contact card", subject: "Contact" };
+        const displayName = asString(content.displayName);
+        const contacts = Array.isArray(content.contacts) ? content.contacts.length : 0;
+        return { text: displayName || (contacts > 1 ? `${contacts} contacts` : "Contact card"), subject: "Contact" };
+    }
+
+    if (contentType === "groupInviteMessage") {
+        const groupName = asString(content.groupName);
+        return { text: groupName || "Group invite", subject: "Group invite" };
+    }
+
+    if (
+        contentType === "pollCreationMessage"
+        || contentType === "pollCreationMessageV2"
+        || contentType === "pollCreationMessageV3"
+        || contentType === "pollCreationMessageV5"
+    ) {
+        const pollName = asString(content.name);
+        return { text: pollName || "Poll", subject: "Poll" };
+    }
+
+    if (contentType === "eventMessage") {
+        const eventName = asString(content.name || content.description);
+        return { text: eventName || "Event", subject: "Event" };
+    }
+
+    if (contentType === "buttonsMessage" || contentType === "listMessage" || contentType === "templateMessage") {
+        const text = asString(content.text || content.contentText || content.title || content.caption || content.footer);
+        return { text: text || "Interactive message", subject: "Interactive message" };
+    }
+
+    if (contentType === "productMessage") {
+        const product = asRecord(content.product);
+        const title = asString(product.title || content.title);
+        return { text: title || "Product", subject: "Product" };
+    }
+
+    if (contentType === "orderMessage") {
+        return { text: "Order", subject: "Order" };
+    }
+
+    if (contentType === "protocolMessage") {
+        return { text: "Message update", subject: "Message update" };
     }
 
     const label = contentType ? contentType.replace(/Message$/i, "") : "Message";
     return {
         text: label,
         subject: label,
+    };
+}
+
+function stubParameterName(value: string | undefined): string {
+    if (!value) {
+        return "someone";
+    }
+
+    if (!value.includes("@")) {
+        return "a participant";
+    }
+
+    const jid = stripDeviceSuffix(value);
+    if (jid.endsWith("@lid")) {
+        return "WhatsApp user";
+    }
+
+    return jidToDisplayName(jid || value);
+}
+
+function formatStubNameList(values: string[]): string {
+    const names = values.map(stubParameterName).filter(Boolean);
+    if (!names.length) {
+        return "someone";
+    }
+
+    if (names.length <= 2) {
+        return names.join(" and ");
+    }
+
+    return `${names.slice(0, 2).join(", ")} and ${names.length - 2} others`;
+}
+
+function normalizeStubMessage(raw: WAMessage, ownerJid = ""): NormalizedMessage | null {
+    const remoteJid = stripDeviceSuffix(raw.key.remoteJid ?? "");
+    const id = raw.key.id ?? "";
+    const stubType = raw.messageStubType;
+    if (!remoteJid || !id || stubType === undefined || stubType === null || remoteJid === "status@broadcast") {
+        return null;
+    }
+
+    const timestamp = timestampSeconds(raw.messageTimestamp);
+    const participantFromEnvelope = optionalString(asRecord(raw).participant);
+    const participant = raw.key.participant
+        ? stripDeviceSuffix(raw.key.participant)
+        : participantFromEnvelope
+          ? stripDeviceSuffix(participantFromEnvelope)
+          : undefined;
+    const normalizedOwner = stripDeviceSuffix(ownerJid);
+    const senderJid = participant ?? "";
+    const fromMe = Boolean(normalizedOwner && senderJid === normalizedOwner);
+    const senderName = fromMe ? "me" : raw.pushName ?? (senderJid ? jidToDisplayName(senderJid) : "Someone");
+    const actor = fromMe ? "You" : senderName;
+    const parameters = raw.messageStubParameters ?? [];
+    const targets = formatStubNameList(parameters);
+
+    let type = "Group activity";
+    let text = "Group activity";
+    let activityOnly = true;
+    let bumpChat = false;
+
+    switch (stubType) {
+        case WAMessageStubType.GROUP_CREATE:
+            text = `${actor} created the group`;
+            break;
+        case WAMessageStubType.GROUP_CHANGE_SUBJECT:
+            text = `${actor} changed the group name${parameters[0] ? ` to "${parameters[0]}"` : ""}`;
+            break;
+        case WAMessageStubType.GROUP_CHANGE_ICON:
+            text = `${actor} changed the group icon`;
+            break;
+        case WAMessageStubType.GROUP_CHANGE_INVITE_LINK:
+            text = `${actor} reset the group invite link`;
+            break;
+        case WAMessageStubType.GROUP_CHANGE_DESCRIPTION:
+            text = `${actor} changed the group description`;
+            break;
+        case WAMessageStubType.GROUP_CHANGE_RESTRICT:
+        case WAMessageStubType.GROUP_CHANGE_ANNOUNCE:
+            text = `${actor} changed the group settings`;
+            break;
+        case WAMessageStubType.GROUP_PARTICIPANT_ADD:
+        case WAMessageStubType.GROUP_PARTICIPANT_INVITE:
+            text = `${actor} added ${targets}`;
+            bumpChat = false;
+            break;
+        case WAMessageStubType.GROUP_PARTICIPANT_REMOVE:
+            text = `${actor} removed ${targets}`;
+            bumpChat = false;
+            break;
+        case WAMessageStubType.GROUP_PARTICIPANT_LEAVE:
+            text = `${targets} left`;
+            bumpChat = false;
+            break;
+        case WAMessageStubType.GROUP_PARTICIPANT_PROMOTE:
+            text = `${actor} made ${targets} ${parameters.length === 1 ? "an admin" : "admins"}`;
+            bumpChat = false;
+            break;
+        case WAMessageStubType.GROUP_PARTICIPANT_DEMOTE:
+            text = `${actor} dismissed ${targets} as ${parameters.length === 1 ? "admin" : "admins"}`;
+            bumpChat = false;
+            break;
+        case WAMessageStubType.GROUP_PARTICIPANT_CHANGE_NUMBER:
+            text = `${parameters[0] ? stubParameterName(parameters[0]) : "Someone"} changed their phone number`;
+            bumpChat = false;
+            break;
+        case WAMessageStubType.GROUP_PARTICIPANT_ACCEPT:
+        case WAMessageStubType.GROUP_PARTICIPANT_LINKED_GROUP_JOIN:
+        case WAMessageStubType.GROUP_PARTICIPANT_JOINED_GROUP_AND_PARENT_GROUP:
+            text = `${targets} joined`;
+            bumpChat = false;
+            break;
+        case WAMessageStubType.CALL_MISSED_VIDEO:
+        case WAMessageStubType.CALL_MISSED_GROUP_VIDEO:
+            type = "Video call";
+            text = "Missed video call";
+            bumpChat = true;
+            break;
+        case WAMessageStubType.CALL_MISSED_VOICE:
+        case WAMessageStubType.CALL_MISSED_GROUP_VOICE:
+            type = "Voice call";
+            text = "Missed voice call";
+            bumpChat = true;
+            break;
+        case WAMessageStubType.REVOKE:
+        case WAMessageStubType.ADMIN_REVOKE:
+            type = "Deleted message";
+            text = fromMe ? "You deleted this message" : "This message was deleted";
+            activityOnly = false;
+            bumpChat = true;
+            break;
+        default:
+            if (!remoteJid.endsWith("@g.us")) {
+                return null;
+            }
+            text = "Group activity";
+            break;
+    }
+
+    return {
+        id,
+        remoteJid,
+        fromMe,
+        senderName,
+        participant,
+        type,
+        text,
+        timestamp,
+        timeLabel: formatTimeLabel(timestamp),
+        key: {
+            id,
+            remoteJid,
+            fromMe,
+            participant,
+        },
+        activityOnly,
+        bumpChat,
+        raw,
     };
 }
 
@@ -503,7 +736,7 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
     const normalizedContent = normalizeMessageContent(raw.message ?? undefined) as MessageContent | undefined;
     const contentType = getContentType(normalizedContent);
     if (!contentType || contentType === "protocolMessage") {
-        return null;
+        return normalizeStubMessage(raw, ownerJid);
     }
 
     const content = contentRecord(normalizedContent?.[contentType as keyof MessageContent]);
@@ -546,33 +779,84 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
     };
 }
 
+export function createMetadataActivityMessage(chat: LocalChatProjection): NormalizedMessage | undefined {
+    const remoteJid = stripDeviceSuffix(chat.remoteJid);
+    const metadataTimestamp = chat.metadataTimestamp ?? 0;
+    const lastTimestamp = Math.max(chat.lastMessage?.timestamp ?? 0, chat.lastActivity?.timestamp ?? 0);
+    if (!remoteJid || metadataTimestamp <= lastTimestamp) {
+        return undefined;
+    }
+
+    const isGroup = remoteJid.endsWith("@g.us");
+    const type = isGroup ? "Recent activity" : "Voice call";
+    const senderName = isGroup ? "Someone" : chat.name || jidToDisplayName(remoteJid);
+
+    return {
+        id: `activity:${remoteJid}:${metadataTimestamp}`,
+        remoteJid,
+        fromMe: false,
+        senderName,
+        type,
+        text: type,
+        timestamp: metadataTimestamp,
+        timeLabel: formatTimeLabel(metadataTimestamp),
+        key: {
+            id: `activity:${metadataTimestamp}`,
+            remoteJid,
+            fromMe: false,
+        },
+        activityOnly: true,
+        bumpChat: !isGroup,
+    };
+}
+
 export function normalizeLocalChat(chat: LocalChatProjection): NormalizedChat {
     const remoteJid = stripDeviceSuffix(chat.remoteJid);
     const isGroup = remoteJid.endsWith("@g.us");
     const name = chat.name || jidToDisplayName(remoteJid);
-    const lastMessage = chat.lastMessage ? withMessageReceipt(chat.lastMessage) : undefined;
-    const messageTimestamp = lastMessage?.timestamp ?? 0;
+    const lastMessage = chat.lastMessage ? withActivityBumpState(withMessageReceipt(chat.lastMessage)) : undefined;
     const metadataTimestamp = chat.metadataTimestamp ?? chat.timestamp ?? 0;
-    const timestamp = lastMessage ? messageTimestamp : metadataTimestamp;
-    const rawSenderName = lastMessage?.fromMe ? "You" : lastMessage?.senderName;
+    const persistedActivity = chat.lastActivity ? withActivityBumpState(withMessageReceipt(chat.lastActivity)) : undefined;
+    const metadataActivity = createMetadataActivityMessage({
+        ...chat,
+        remoteJid,
+        name,
+        lastMessage,
+        lastActivity: persistedActivity,
+        metadataTimestamp,
+    });
+    const activities = [persistedActivity, metadataActivity, lastMessage]
+        .filter((activity): activity is NormalizedMessage => Boolean(activity))
+        .sort((a, b) => b.timestamp - a.timestamp);
+    const lastActivity = activities[0];
+    const timestamp = lastActivity?.timestamp ?? metadataTimestamp;
+    const latestBumpingActivity = activities.find((activity) => activity.bumpChat !== false);
+    const sortTimestamp = latestBumpingActivity?.timestamp
+        ?? (lastActivity?.bumpChat === false ? 0 : metadataTimestamp);
+    const rawSenderName = lastActivity?.fromMe ? "You" : lastActivity?.senderName;
     const senderName = rawSenderName && !isIdentifierLike(rawSenderName) ? rawSenderName : "Someone";
-    const groupPreview = Boolean(isGroup && lastMessage);
-    const isTextMessage = lastMessage?.type === "Text message";
-    const messageText = lastMessage?.text.trim() ?? "";
-    const repeatedMediaText = Boolean(lastMessage && messageText === lastMessage.type);
-    const subject = groupPreview
+    const groupPreview = Boolean(isGroup && lastActivity);
+    const activityPreview = Boolean(lastActivity?.activityOnly);
+    const isTextMessage = lastActivity?.type === "Text message";
+    const messageText = lastActivity?.text.trim() ?? "";
+    const repeatedMediaText = Boolean(lastActivity && messageText === lastActivity.type);
+    const subject = groupPreview && activityPreview
+        ? messageText || lastActivity?.type || "Recent activity"
+        : groupPreview
         ? `${senderName || "Someone"}:`
-        : lastMessage?.fromMe
+        : lastActivity?.fromMe
           ? isTextMessage
             ? "You:"
-            : `You: ${lastMessage.type}`
+            : `You: ${lastActivity.type}`
           : isTextMessage
             ? messageText || "Text message"
-            : lastMessage?.type || (isGroup ? "Group chat" : "Chat");
-    const snippet = groupPreview
-        ? messageText || lastMessage?.type || ""
+            : lastActivity?.type || (isGroup ? "Group chat" : "Chat");
+    const snippet = groupPreview && activityPreview
+        ? ""
+        : groupPreview
+        ? messageText || lastActivity?.type || ""
         : isTextMessage
-          ? lastMessage?.fromMe ? messageText : ""
+          ? lastActivity?.fromMe ? messageText : ""
           : repeatedMediaText ? "" : messageText || "No recent messages";
 
     return {
@@ -582,12 +866,17 @@ export function normalizeLocalChat(chat: LocalChatProjection): NormalizedChat {
         subject,
         snippet,
         timestamp,
+        sortTimestamp,
         timeLabel: formatTimeLabel(timestamp),
         unreadCount: Math.max(0, chat.unreadCount ?? 0),
         isGroup,
         isSaved: Boolean(chat.raw),
+        isPinned: Boolean(chat.pinned),
+        pinnedTimestamp: chat.pinnedTimestamp,
+        pinnedRank: chat.pinnedRank,
         profilePicUrl: chat.profilePicUrl,
         lastMessage,
+        lastActivity,
         raw: chat.raw,
     };
 }

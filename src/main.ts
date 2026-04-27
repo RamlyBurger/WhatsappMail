@@ -31,6 +31,8 @@ const appRoot = document.getElementById("app");
 let toastTimer: number | undefined;
 let events: EventSource | null = null;
 let pendingThreadScrollBottom = false;
+let pendingThreadScrollRestore: { chatId: string; previousScrollHeight: number; previousScrollTop: number } | null = null;
+let suppressThreadTopLoadUntil = 0;
 let renderQueued = false;
 let searchRenderTimer: number | undefined;
 let searchFocus: { start: number | null; end: number | null } | null = null;
@@ -38,6 +40,12 @@ let backgroundSyncTimer: number | undefined;
 let backgroundSyncNeedsMessages = false;
 let backgroundSyncScrollToBottom = false;
 const CLIENT_CACHE_KEY = "whatsappmail.clientCache.v1";
+const THREAD_PAGE_SIZE = 40;
+const threadVisibleCounts = new Map<string, number>();
+const threadMessagePages = new Map<string, number>();
+const threadMessageTotals = new Map<string, number>();
+const loadingOlderThreadIds = new Set<string>();
+const inlineReplyDrafts = new Map<string, string>();
 
 if (!appRoot) {
     throw new Error("Missing #app root");
@@ -143,7 +151,18 @@ function visibleChats(): WhatsAppChatRow[] {
         rows = rows.filter((chat) => `${chat.name} ${chat.subject} ${chat.snippet}`.toLowerCase().includes(search));
     }
 
-    return rows.sort((a, b) => b.timestamp - a.timestamp);
+    return rows.sort((a, b) => {
+        if (a.isPinned !== b.isPinned) {
+            return a.isPinned ? -1 : 1;
+        }
+
+        if (a.isPinned && b.isPinned) {
+            const rankDelta = (a.pinnedRank ?? Number.MAX_SAFE_INTEGER) - (b.pinnedRank ?? Number.MAX_SAFE_INTEGER);
+            return rankDelta || (b.pinnedTimestamp ?? 0) - (a.pinnedTimestamp ?? 0) || b.timestamp - a.timestamp;
+        }
+
+        return (b.sortTimestamp ?? b.timestamp) - (a.sortTimestamp ?? a.timestamp) || b.timestamp - a.timestamp;
+    });
 }
 
 function totalUnread(): number {
@@ -300,13 +319,18 @@ function renderToolbar(): string {
 function renderChatRow(chat: WhatsAppChatRow): string {
     const selected = state.selectedIds.has(chat.remoteJid);
     const starred = state.starredIds.has(chat.remoteJid);
+    const pinned = Boolean(chat.isPinned);
     const open = state.openChatId === chat.remoteJid;
     const rowClasses = [
         "email-row",
         isUnread(chat) ? "unread" : "read",
         selected ? "selected" : "",
         open ? "opened" : "",
+        pinned ? "pinned" : "",
     ].filter(Boolean).join(" ");
+    const starControl = pinned
+        ? `<button class="star-button action-button pinned-star" aria-label="Pinned conversation" data-action="noop">${icon("star", true)}</button>`
+        : `<button class="star-button action-button${starred ? " starred" : ""}" aria-label="${starred ? "Unstar" : "Star"} ${escapeHtml(chat.name)}" data-action="toggle-star" data-chat-id="${escapeHtml(chat.remoteJid)}">${icon("star", starred)}</button>`;
 
     return `
         <article class="${rowClasses}" data-chat-row data-chat-id="${escapeHtml(chat.remoteJid)}">
@@ -314,38 +338,59 @@ function renderChatRow(chat: WhatsAppChatRow): string {
                 <button class="row-check action-button" aria-label="${selected ? "Deselect" : "Select"} ${escapeHtml(chat.name)}" data-action="toggle-chat-select" data-chat-id="${escapeHtml(chat.remoteJid)}">
                     <span class="checkbox${selected ? " checked" : ""}"></span>
                 </button>
-                <button class="star-button action-button${starred ? " starred" : ""}" aria-label="${starred ? "Unstar" : "Star"} ${escapeHtml(chat.name)}" data-action="toggle-star" data-chat-id="${escapeHtml(chat.remoteJid)}">
-                    ${icon("star", starred)}
-                </button>
+                ${starControl}
             </div>
             <div class="sender">${avatarInline(chat)}${escapeHtml(chat.name)}${chat.unreadCount ? ` <span class="chat-count">${escapeHtml(chat.unreadCount)}</span>` : ""}</div>
             ${renderChatPreview(chat)}
-            <time>${escapeHtml(chat.timeLabel)}</time>
+            <div class="row-time">
+                <time>${escapeHtml(chat.timeLabel)}</time>
+            </div>
         </article>
     `;
 }
 
 function renderChatPreview(chat: WhatsAppChatRow): string {
-    const groupSenderPreview = Boolean(chat.isGroup && chat.lastMessage);
+    const previewMessage = chat.lastActivity ?? chat.lastMessage;
+    const groupSenderPreview = Boolean(chat.isGroup && previewMessage);
+    const mediaPreview = renderRowMediaPreview(previewMessage);
     const senderStylePreview = groupSenderPreview || chat.subject.endsWith(":");
-    const separator = senderStylePreview ? " " : "- ";
+    const separator = previewMessage?.activityOnly ? "" : senderStylePreview ? " " : "- ";
+    const showSubject = Boolean(chat.subject && (!mediaPreview || senderStylePreview || previewMessage?.activityOnly));
 
     return `
         <div class="message">
-            ${renderReadReceipt(chat.lastMessage, "row-preview")}
-            <span class="subject">${chat.isGroup ? `<span class="group-chip">Group</span>` : ""}${escapeHtml(chat.subject)}</span>
-            ${chat.snippet ? `<span class="snippet">${separator}${escapeHtml(chat.snippet)}</span>` : ""}
+            ${renderReadReceipt(previewMessage, "row-preview")}
+            ${showSubject ? `<span class="subject">${escapeHtml(chat.subject)}</span>` : ""}
+            ${mediaPreview ? `<span class="snippet media-preview-inline${showSubject ? "" : " no-prefix"}">${showSubject ? separator : ""}${mediaPreview}</span>` : chat.snippet ? `<span class="snippet">${separator}${escapeHtml(chat.snippet)}</span>` : ""}
         </div>
     `;
 }
 
+function renderRowMediaPreview(message: WhatsAppMessage | undefined): string {
+    if (!message) {
+        return "";
+    }
+
+    const type = message.type.toLowerCase();
+    if (type === "image") {
+        return `<span class="row-media-kind">${icon("image")}<span>Image</span></span>`;
+    }
+
+    if (type === "sticker") {
+        return `<span class="row-media-kind">${icon("sticky_note_2")}<span>Sticker</span></span>`;
+    }
+
+    return "";
+}
+
 function avatarInline(chat: WhatsAppChatRow): string {
+    const groupBadge = chat.isGroup ? `<span class="avatar-group-tag">Group</span>` : "";
     if (chat.profilePicUrl) {
-        return `<span class="row-avatar" style="background-image:url('${escapeHtml(chat.profilePicUrl)}')"></span>`;
+        return `<span class="row-avatar-wrap"><span class="row-avatar" style="background-image:url('${escapeHtml(chat.profilePicUrl)}')"></span>${groupBadge}</span>`;
     }
 
     const initial = (chat.name.trim()[0] || "#").toUpperCase();
-    return `<span class="row-avatar">${escapeHtml(initial)}</span>`;
+    return `<span class="row-avatar-wrap"><span class="row-avatar">${escapeHtml(initial)}</span>${groupBadge}</span>`;
 }
 
 function renderInbox(): string {
@@ -440,6 +485,10 @@ function renderThread(): string {
 }
 
 function renderThreadContent(chat: WhatsAppChatRow, messages: WhatsAppMessage[]): string {
+    const visibleMessages = visibleThreadMessages(chat.remoteJid, messages);
+    const hasOlder = hasOlderThreadMessages(chat.remoteJid, messages);
+    const loadingOlder = loadingOlderThreadIds.has(chat.remoteJid);
+
     return `
         <div class="thread-heading">
             <h1>${escapeHtml(chat.name)}</h1>
@@ -450,16 +499,14 @@ function renderThreadContent(chat: WhatsAppChatRow, messages: WhatsAppMessage[])
                 <button class="icon-button" aria-label="Open in new window" data-action="toast" data-message="Pop-out window is visual only">${icon("open_in_new")}</button>
             </div>
         </div>
-        <div class="thread-message-list">
-            ${state.loadingMessages ? `<div class="thread-loading">Loading WhatsApp messages...</div>` : ""}
-            ${messages.length ? messages.map((message) => renderMessage(chat, message)).join("") : `<div class="empty-folder thread-empty">${icon("chat_bubble")}<p>No messages loaded</p></div>`}
+        <div class="thread-message-scroll" data-thread-scroll>
+            <div class="thread-message-list">
+                ${loadingOlder ? `<div class="thread-loading older-loading">Loading older messages...</div>` : hasOlder ? `<div class="thread-older-hint">Scroll up for older messages</div>` : ""}
+                ${state.loadingMessages ? `<div class="thread-loading">Loading WhatsApp messages...</div>` : ""}
+                ${visibleMessages.length ? visibleMessages.map((message) => renderMessage(chat, message)).join("") : `<div class="empty-folder thread-empty">${icon("chat_bubble")}<p>No messages loaded</p></div>`}
+            </div>
         </div>
-        <div class="thread-footer-actions">
-            <button class="reply-pill" data-action="open-compose" data-compose-mode="reply">${icon("reply")}Reply</button>
-            <button class="reply-pill wide" data-action="open-compose" data-compose-mode="replyAll">${icon("reply_all")}Reply all</button>
-            <button class="reply-pill wide" data-action="open-compose" data-compose-mode="forward">${icon("forward")}Forward</button>
-            <button class="round-reaction" aria-label="Add reaction" data-action="toast" data-message="Choose a message to react">${icon("sentiment_satisfied")}</button>
-        </div>
+        ${renderThreadInlineComposer(chat)}
     `;
 }
 
@@ -467,7 +514,45 @@ function renderThreadPlaceholder(): string {
     return `<div class="empty-folder thread-empty">${icon("chat_bubble")}<p>Select a WhatsApp chat</p></div>`;
 }
 
+function visibleThreadMessages(remoteJid: string, messages: WhatsAppMessage[]): WhatsAppMessage[] {
+    const count = Math.max(1, threadVisibleCounts.get(remoteJid) ?? THREAD_PAGE_SIZE);
+    return messages.slice(-count);
+}
+
+function hasOlderThreadMessages(remoteJid: string, messages: WhatsAppMessage[]): boolean {
+    const visibleCount = threadVisibleCounts.get(remoteJid) ?? THREAD_PAGE_SIZE;
+    const total = threadMessageTotals.get(remoteJid) ?? messages.length;
+    return visibleCount < messages.length || messages.length < total;
+}
+
+function renderThreadInlineComposer(chat: WhatsAppChatRow): string {
+    const draft = inlineReplyDrafts.get(chat.remoteJid) ?? "";
+
+    return `
+        <form class="thread-inline-compose" data-inline-compose data-chat-id="${escapeHtml(chat.remoteJid)}">
+            <div class="thread-inline-avatar">${messageAvatarInitial("me")}</div>
+            <div class="thread-inline-box">
+                <div class="thread-inline-body" contenteditable="true" role="textbox" aria-label="Reply to ${escapeHtml(chat.name)}" data-inline-body data-placeholder="Reply to ${escapeHtml(chat.name)}">${escapeHtml(draft)}</div>
+                <div class="thread-inline-toolbar">
+                    <button class="send-button inline-send" data-action="send-inline-reply" type="button">Send</button>
+                    <label class="icon-button attach-label" aria-label="Attach">
+                        ${icon("attach_file")}
+                        <input class="compose-file-input" type="file" data-compose-file>
+                    </label>
+                    <button class="icon-button" aria-label="Emoji" type="button" data-action="toast" data-message="Emoji picker is visual only">${icon("mood")}</button>
+                    <button class="icon-button" aria-label="Formatting" type="button" data-action="toast" data-message="Formatting is visual only">${icon("format_color_text")}</button>
+                    <button class="icon-button trash-compose" aria-label="Clear draft" type="button" data-action="clear-inline-reply">${icon("delete")}</button>
+                </div>
+            </div>
+        </form>
+    `;
+}
+
 function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string {
+    if (message.activityOnly) {
+        return renderActivityMessage(message);
+    }
+
     const classes = ["thread-message", message.fromMe ? "from-me" : ""]
         .filter(Boolean)
         .join(" ");
@@ -499,6 +584,22 @@ function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string 
                     ${renderMessageReactions(message)}
                 </div>
             </div>
+        </article>
+    `;
+}
+
+function renderActivityMessage(message: WhatsAppMessage): string {
+    const glyph = message.type === "Voice call"
+        ? "call"
+        : message.type === "Video call"
+          ? "videocam"
+          : "info";
+
+    return `
+        <article class="thread-activity" data-message-id="${escapeHtml(message.id)}">
+            <span class="thread-activity-icon">${icon(glyph)}</span>
+            <span class="thread-activity-text">${escapeHtml(message.text || message.type)}</span>
+            <time>${escapeHtml(message.timeLabel)}</time>
         </article>
     `;
 }
@@ -604,6 +705,10 @@ function renderThreadAvatar(chat: WhatsAppChatRow, message: WhatsAppMessage, sen
 
     const initial = (sender.trim()[0] || "?").toUpperCase();
     return `<div class="thread-avatar empty-avatar"><span>${escapeHtml(initial)}</span></div>`;
+}
+
+function messageAvatarInitial(value: string): string {
+    return escapeHtml((value.trim()[0] || "?").toUpperCase());
 }
 
 function messageTextForThread(message: WhatsAppMessage): string {
@@ -938,17 +1043,30 @@ function afterRender(): void {
         }
     }
 
-    if (!pendingThreadScrollBottom) {
-        return;
+    if (pendingThreadScrollRestore) {
+        const restore = pendingThreadScrollRestore;
+        pendingThreadScrollRestore = null;
+        window.requestAnimationFrame(() => {
+            const scroller = app.querySelector<HTMLElement>(".thread-message-scroll");
+            if (scroller && state.openChatId === restore.chatId) {
+                scroller.scrollTop = scroller.scrollHeight - restore.previousScrollHeight + restore.previousScrollTop;
+            }
+        });
     }
 
-    pendingThreadScrollBottom = false;
-    window.requestAnimationFrame(() => {
-        const threadContent = app.querySelector<HTMLElement>(".thread-content");
-        if (threadContent) {
-            threadContent.scrollTop = threadContent.scrollHeight;
-        }
-    });
+    if (pendingThreadScrollBottom) {
+        pendingThreadScrollBottom = false;
+        suppressThreadTopLoadUntil = Date.now() + 1400;
+        window.requestAnimationFrame(() => {
+            const scroller = app.querySelector<HTMLElement>(".thread-message-scroll");
+            if (scroller) {
+                scroller.scrollTop = scroller.scrollHeight;
+                window.requestAnimationFrame(() => {
+                    scroller.scrollTop = scroller.scrollHeight;
+                });
+            }
+        });
+    }
 }
 
 function showToast(message: string): void {
@@ -1072,20 +1190,29 @@ async function loadMessages(remoteJid: string, options: LoadOptions = {}): Promi
     }
     if (scrollToBottom && remoteJid === state.openChatId) {
         pendingThreadScrollBottom = true;
+        suppressThreadTopLoadUntil = Date.now() + 1400;
     }
     if (showLoading) {
         render();
     }
 
     try {
-        const response = await getMessages(remoteJid, 1, 200);
-        state.messagesByChat[remoteJid] = response.messages;
+        const loadedPage = threadMessagePages.get(remoteJid) ?? 1;
+        const limit = scrollToBottom ? THREAD_PAGE_SIZE : Math.max(THREAD_PAGE_SIZE, loadedPage * THREAD_PAGE_SIZE);
+        const response = await getMessages(remoteJid, 1, limit);
+        state.messagesByChat[remoteJid] = sortMessages(response.messages);
+        threadMessagePages.set(remoteJid, Math.max(1, Math.ceil(response.messages.length / THREAD_PAGE_SIZE)));
+        threadMessageTotals.set(remoteJid, response.total);
+        if (!threadVisibleCounts.has(remoteJid) || scrollToBottom) {
+            threadVisibleCounts.set(remoteJid, Math.min(THREAD_PAGE_SIZE, Math.max(response.messages.length, 1)));
+        }
         if (response.messages.length) {
             saveClientCache();
         }
         state.error = null;
         if (scrollToBottom && remoteJid === state.openChatId) {
             pendingThreadScrollBottom = true;
+            suppressThreadTopLoadUntil = Date.now() + 1400;
         }
     } catch (error) {
         state.error = error instanceof Error ? error.message : "Could not load WhatsApp messages.";
@@ -1095,6 +1222,64 @@ async function loadMessages(remoteJid: string, options: LoadOptions = {}): Promi
         }
         render();
     }
+}
+
+async function loadOlderThreadMessages(scroller: HTMLElement): Promise<void> {
+    const remoteJid = state.openChatId;
+    if (!remoteJid || loadingOlderThreadIds.has(remoteJid)) {
+        return;
+    }
+
+    const messages = state.messagesByChat[remoteJid] ?? [];
+    const currentVisible = threadVisibleCounts.get(remoteJid) ?? THREAD_PAGE_SIZE;
+    const total = threadMessageTotals.get(remoteJid) ?? messages.length;
+    if (currentVisible >= messages.length && messages.length >= total) {
+        return;
+    }
+
+    pendingThreadScrollRestore = {
+        chatId: remoteJid,
+        previousScrollHeight: scroller.scrollHeight,
+        previousScrollTop: scroller.scrollTop,
+    };
+
+    if (currentVisible < messages.length) {
+        threadVisibleCounts.set(remoteJid, Math.min(currentVisible + THREAD_PAGE_SIZE, messages.length));
+        render();
+        return;
+    }
+
+    loadingOlderThreadIds.add(remoteJid);
+
+    try {
+        const nextPage = (threadMessagePages.get(remoteJid) ?? 1) + 1;
+        const response = await getMessages(remoteJid, nextPage, THREAD_PAGE_SIZE);
+        state.messagesByChat[remoteJid] = mergeMessages(messages, response.messages);
+        threadMessagePages.set(remoteJid, nextPage);
+        threadMessageTotals.set(remoteJid, response.total);
+        threadVisibleCounts.set(remoteJid, Math.min(currentVisible + response.messages.length, state.messagesByChat[remoteJid].length));
+        if (response.messages.length) {
+            saveClientCache();
+        }
+    } catch (error) {
+        showToast(error instanceof Error ? error.message : "Could not load older messages");
+    } finally {
+        loadingOlderThreadIds.delete(remoteJid);
+        render();
+    }
+}
+
+function mergeMessages(existing: WhatsAppMessage[], incoming: WhatsAppMessage[]): WhatsAppMessage[] {
+    const merged = new Map<string, WhatsAppMessage>();
+    for (const message of [...existing, ...incoming]) {
+        merged.set(message.id, message);
+    }
+
+    return sortMessages([...merged.values()]);
+}
+
+function sortMessages(messages: WhatsAppMessage[]): WhatsAppMessage[] {
+    return [...messages].sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
 }
 
 function scheduleBackgroundSync(options: { reloadOpenMessages?: boolean; scrollToBottom?: boolean } = {}): void {
@@ -1211,7 +1396,9 @@ async function openChat(remoteJid: string): Promise<void> {
     state.selectedIds.clear();
     state.localReadIds.add(remoteJid);
     state.menu = null;
+    threadVisibleCounts.set(remoteJid, Math.min(THREAD_PAGE_SIZE, Math.max(state.messagesByChat[remoteJid]?.length ?? THREAD_PAGE_SIZE, 1)));
     pendingThreadScrollBottom = true;
+    suppressThreadTopLoadUntil = Date.now() + 1400;
     history.replaceState(null, "", "#open-chat");
     render();
     await Promise.allSettled([
@@ -1296,6 +1483,41 @@ async function sendCompose(target: HTMLElement): Promise<void> {
     }
 }
 
+async function sendInlineReply(target: HTMLElement): Promise<void> {
+    const remoteJid = state.openChatId;
+    const composer = target.closest(".thread-inline-compose") as HTMLElement | null;
+    const bodyElement = composer?.querySelector<HTMLElement>("[data-inline-body]");
+    const body = bodyElement?.innerText.trim() ?? "";
+
+    if (!remoteJid || !body) {
+        showToast("Add a reply first");
+        return;
+    }
+
+    inlineReplyDrafts.delete(remoteJid);
+    if (bodyElement) {
+        bodyElement.innerText = "";
+    }
+
+    const temp = makeOptimisticMessage(remoteJid, body);
+    addMessage(temp);
+    pendingThreadScrollBottom = true;
+    render();
+
+    try {
+        const response = await sendText(remoteJid, body);
+        replaceMessage(temp.id, {
+            ...response.message,
+            remoteJid: response.message.remoteJid || remoteJid,
+        });
+        showToast("Message sent");
+        await loadChats();
+    } catch (error) {
+        removeMessage(temp.id, remoteJid);
+        showToast(error instanceof Error ? error.message : "Message failed");
+    }
+}
+
 async function handleMediaFile(input: HTMLInputElement): Promise<void> {
     const file = input.files?.[0];
     if (!file) {
@@ -1303,8 +1525,11 @@ async function handleMediaFile(input: HTMLInputElement): Promise<void> {
     }
 
     const compose = input.closest(".compose-window") as HTMLElement | null;
+    const inlineComposer = input.closest(".thread-inline-compose") as HTMLElement | null;
     const to = (compose?.querySelector("[data-compose-to]") as HTMLInputElement | null)?.value.trim() ?? "";
-    const caption = (compose?.querySelector(".compose-body") as HTMLElement | null)?.innerText.trim() ?? "";
+    const caption = (compose?.querySelector(".compose-body") as HTMLElement | null)?.innerText.trim()
+        ?? (inlineComposer?.querySelector("[data-inline-body]") as HTMLElement | null)?.innerText.trim()
+        ?? "";
     const remoteJid = state.compose?.remoteJid || to || state.openChatId || "";
 
     if (!remoteJid) {
@@ -1317,6 +1542,14 @@ async function handleMediaFile(input: HTMLInputElement): Promise<void> {
         showToast("Uploading media");
         const response = await sendMedia(remoteJid, file, caption);
         addMessage({ ...response.message, remoteJid: response.message.remoteJid || remoteJid });
+        if (inlineComposer) {
+            inlineReplyDrafts.delete(remoteJid);
+            const bodyElement = inlineComposer.querySelector<HTMLElement>("[data-inline-body]");
+            if (bodyElement) {
+                bodyElement.innerText = "";
+            }
+            pendingThreadScrollBottom = true;
+        }
         await loadChats();
         input.value = "";
     } catch (error) {
@@ -1351,13 +1584,18 @@ function makeOptimisticMessage(remoteJid: string, text: string): WhatsAppMessage
 
 function addMessage(message: WhatsAppMessage): void {
     const current = state.messagesByChat[message.remoteJid] ?? [];
-    state.messagesByChat[message.remoteJid] = [...current, message].sort((a, b) => a.timestamp - b.timestamp);
+    state.messagesByChat[message.remoteJid] = sortMessages([...current, message]);
+    threadMessageTotals.set(message.remoteJid, Math.max(threadMessageTotals.get(message.remoteJid) ?? 0, state.messagesByChat[message.remoteJid].length));
+    threadVisibleCounts.set(message.remoteJid, Math.min(Math.max(threadVisibleCounts.get(message.remoteJid) ?? THREAD_PAGE_SIZE, THREAD_PAGE_SIZE), state.messagesByChat[message.remoteJid].length));
+    if (state.openChatId === message.remoteJid && message.fromMe) {
+        pendingThreadScrollBottom = true;
+    }
     upsertChatFromMessage(message);
 }
 
 function replaceMessage(tempId: string, message: WhatsAppMessage): void {
     const current = state.messagesByChat[message.remoteJid] ?? [];
-    state.messagesByChat[message.remoteJid] = current.map((item) => item.id === tempId ? message : item);
+    state.messagesByChat[message.remoteJid] = sortMessages(current.map((item) => item.id === tempId ? message : item));
     upsertChatFromMessage(message);
     render();
 }
@@ -1370,12 +1608,14 @@ function removeMessage(messageId: string, remoteJid: string): void {
 function upsertChatFromMessage(message: WhatsAppMessage): void {
     const existing = state.chats.find((chat) => chat.remoteJid === message.remoteJid);
     if (existing) {
+        const previousSortTimestamp = existing.sortTimestamp ?? existing.lastMessage?.timestamp ?? existing.timestamp;
         existing.lastMessage = message;
         existing.subject = message.fromMe
             ? message.type === "Text message" ? "You:" : `You: ${message.type}`
             : message.type === "Text message" ? message.text : message.type;
         existing.snippet = message.text;
         existing.timestamp = message.timestamp;
+        existing.sortTimestamp = message.bumpChat === false ? previousSortTimestamp : message.timestamp;
         existing.timeLabel = message.timeLabel;
         saveClientCache();
         return;
@@ -1390,6 +1630,7 @@ function upsertChatFromMessage(message: WhatsAppMessage): void {
             : message.type === "Text message" ? message.text : message.type,
         snippet: message.text,
         timestamp: message.timestamp,
+        sortTimestamp: message.bumpChat === false ? 0 : message.timestamp,
         timeLabel: message.timeLabel,
         unreadCount: 0,
         isGroup: message.remoteJid.endsWith("@g.us"),
@@ -1522,6 +1763,8 @@ async function handleAction(target: HTMLElement): Promise<void> {
     const action = target.dataset.action;
 
     switch (action) {
+        case "noop":
+            return;
         case "toggle-menu": {
             const menu = target.dataset.menu as AppState["menu"];
             state.menu = state.menu === menu ? null : menu;
@@ -1611,6 +1854,17 @@ async function handleAction(target: HTMLElement): Promise<void> {
         case "send-compose":
             await sendCompose(target);
             return;
+        case "send-inline-reply":
+            await sendInlineReply(target);
+            return;
+        case "clear-inline-reply": {
+            const remoteJid = state.openChatId;
+            if (remoteJid) {
+                inlineReplyDrafts.delete(remoteJid);
+            }
+            render();
+            return;
+        }
         case "toggle-compose-minimized":
             if (state.compose) {
                 state.compose.minimized = !state.compose.minimized;
@@ -1683,8 +1937,16 @@ app.addEventListener("click", (event) => {
 });
 
 app.addEventListener("input", (event) => {
-    const target = event.target as HTMLInputElement;
-    if (!target.classList.contains("search-input")) {
+    const target = event.target as HTMLElement;
+    if (target.matches("[data-inline-body]")) {
+        const remoteJid = state.openChatId;
+        if (remoteJid) {
+            inlineReplyDrafts.set(remoteJid, target.innerText);
+        }
+        return;
+    }
+
+    if (!(target instanceof HTMLInputElement) || !target.classList.contains("search-input")) {
         return;
     }
 
@@ -1706,6 +1968,21 @@ app.addEventListener("input", (event) => {
         render();
     }, 100);
 });
+
+app.addEventListener("scroll", (event) => {
+    const target = event.target as HTMLElement;
+    if (
+        !target.classList?.contains("thread-message-scroll")
+        || pendingThreadScrollBottom
+        || Date.now() < suppressThreadTopLoadUntil
+        || target.scrollTop > 32
+        || target.scrollHeight <= target.clientHeight + 16
+    ) {
+        return;
+    }
+
+    void loadOlderThreadMessages(target);
+}, true);
 
 app.addEventListener("change", (event) => {
     const target = event.target as HTMLInputElement;
@@ -1734,6 +2011,17 @@ app.addEventListener("error", (event) => {
 }, true);
 
 window.addEventListener("keydown", (event) => {
+    const target = event.target as HTMLElement;
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && target.matches("[data-inline-body]")) {
+        event.preventDefault();
+        const composer = target.closest(".thread-inline-compose") as HTMLElement | null;
+        const sendButton = composer?.querySelector<HTMLElement>("[data-action='send-inline-reply']");
+        if (sendButton) {
+            void sendInlineReply(sendButton);
+        }
+        return;
+    }
+
     if (event.key === "Escape") {
         state.menu = null;
         if (state.compose?.expanded) {
