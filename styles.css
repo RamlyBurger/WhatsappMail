@@ -348,6 +348,23 @@ button {
     position: absolute;
 }
 
+.profile-avatar-img {
+    background: #e8eaed;
+    border: 1px solid rgba(60, 64, 67, .18);
+    border-radius: 50%;
+    display: block;
+    height: 30px;
+    inset: 3px;
+    object-fit: cover;
+    position: absolute;
+    width: 30px;
+    z-index: 2;
+}
+
+.profile-avatar.has-photo .avatar-face {
+    position: absolute;
+}
+
 .avatar-face {
     background:
         radial-gradient(circle at 44% 43%, #202124 0 1.1px, transparent 1.5px),
@@ -395,6 +412,7 @@ button {
     grid-row: 2;
     overflow: hidden;
     padding-top: 8px;
+    position: relative;
 }
 
 .compose-button {
@@ -508,6 +526,14 @@ button {
 
 .labels-heading .material-symbols-outlined {
     font-size: 22px;
+}
+
+.local-session-notice {
+    bottom: 18px;
+    color: #5f6368;
+    font-size: 11px;
+    left: 26px;
+    position: absolute;
 }
 
 .label-add {
@@ -651,13 +677,14 @@ button {
     color: #202124;
     display: grid;
     font-size: 14px;
-    grid-template-columns: 57px 200px minmax(0, 1fr) 70px;
+    grid-template-columns: 74px 200px minmax(0, 1fr) 70px;
     height: 40px;
     line-height: 20px;
     padding: 0 32px 0 20px;
 }
 
-.email-row[data-open-email] {
+.email-row[data-open-email],
+.email-row[data-chat-row] {
     cursor: pointer;
 }
 
@@ -685,7 +712,7 @@ button {
 .row-actions {
     align-items: center;
     display: flex;
-    gap: 14px;
+    gap: 6px;
 }
 
 .action-button {
@@ -724,6 +751,35 @@ button {
     font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 20;
 }
 
+.row-avatar {
+    align-items: center;
+    background: #d7e3f8;
+    background-position: center;
+    background-size: cover;
+    border-radius: 50%;
+    color: #174ea6;
+    display: inline-flex;
+    font-size: 11px;
+    font-weight: 700;
+    height: 22px;
+    justify-content: center;
+    margin-right: 8px;
+    vertical-align: middle;
+    width: 22px;
+}
+
+.group-chip {
+    background: #e6f4ea;
+    border-radius: 3px;
+    color: #137333;
+    display: inline-flex;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 16px;
+    margin-right: 6px;
+    padding: 0 5px;
+}
+
 .sender,
 .message,
 .subject,
@@ -738,7 +794,7 @@ button {
     padding-right: 16px;
 }
 
-.sender span {
+.sender .chat-count {
     color: #5f6368;
     font-size: 12px;
     font-weight: 400;
@@ -916,7 +972,7 @@ button {
 
 .thread-content {
     flex: 1;
-    overflow: hidden;
+    overflow: auto;
     padding: 20px 22px 0 23px;
     position: relative;
 }
@@ -959,6 +1015,11 @@ button {
     margin-left: 5px;
 }
 
+.thread-label.whatsapp-group {
+    background: #e6f4ea;
+    color: #137333;
+}
+
 .thread-heading-actions {
     align-items: center;
     display: flex;
@@ -979,6 +1040,24 @@ button {
     display: grid;
     grid-template-columns: 48px minmax(0, 1fr);
     margin-top: 25px;
+}
+
+.thread-message-list {
+    padding-bottom: 86px;
+}
+
+.thread-message.from-me .message-body {
+    max-width: 720px;
+}
+
+.thread-loading {
+    color: #5f6368;
+    font-size: 14px;
+    margin: 24px 0 0 56px;
+}
+
+.thread-empty {
+    height: 360px;
 }
 
 .thread-avatar {
@@ -1039,6 +1118,10 @@ button {
     font-size: 16px;
 }
 
+.message-recipient .participant {
+    margin-left: 5px;
+}
+
 .message-meta {
     align-items: center;
     color: #5f6368;
@@ -1082,6 +1165,35 @@ button {
     font-weight: 700;
     line-height: 26px;
     margin-bottom: 17px;
+}
+
+.media-preview {
+    margin: 0 0 14px;
+}
+
+.media-preview img,
+.media-preview video {
+    border-radius: 8px;
+    display: block;
+    max-height: 280px;
+    max-width: min(420px, 100%);
+    object-fit: contain;
+}
+
+.media-attachment {
+    align-items: center;
+    border: 1px solid #dadce0;
+    border-radius: 8px;
+    display: inline-flex;
+    font-size: 14px;
+    gap: 10px;
+    margin-bottom: 12px;
+    max-width: 360px;
+    padding: 10px 12px;
+}
+
+.media-attachment .material-symbols-outlined {
+    color: #1a73e8;
 }
 
 .reply-message {
@@ -1227,7 +1339,7 @@ button {
 }
 
 .app-shell.mail-open .email-row {
-    grid-template-columns: 57px 172px minmax(0, 1fr) 64px;
+    grid-template-columns: 74px 172px minmax(0, 1fr) 64px;
     height: 39px;
     padding: 0 27px 0 20px;
 }
@@ -1521,6 +1633,126 @@ button {
     font-size: 48px;
 }
 
+.system-notice {
+    align-items: center;
+    background: #fef7e0;
+    border-bottom: 1px solid #fdd663;
+    color: #3c4043;
+    display: flex;
+    font-size: 13px;
+    gap: 10px;
+    min-height: 42px;
+    padding: 8px 20px;
+}
+
+.system-notice.error {
+    background: #fce8e6;
+    border-bottom-color: #f6aea9;
+}
+
+.system-notice span {
+    color: #5f6368;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.system-notice button {
+    border-radius: 16px;
+    color: #0b57d0;
+    font-weight: 500;
+    margin-left: auto;
+    padding: 6px 12px;
+}
+
+.system-notice button:hover {
+    background: rgba(26, 115, 232, .08);
+}
+
+.skeleton-row {
+    color: #8b9097;
+}
+
+.skeleton-star {
+    border: 2px solid #d4d7dc;
+    border-radius: 50%;
+    display: block;
+    height: 16px;
+    width: 16px;
+}
+
+.compose-file-input {
+    display: none;
+}
+
+.attach-label {
+    cursor: pointer;
+}
+
+.local-session-panel .side-panel-body {
+    justify-content: flex-start;
+    padding-top: 42px;
+}
+
+.local-session-panel small {
+    color: #5f6368;
+    font-size: 12px;
+    margin-top: 10px;
+}
+
+.pairing-code {
+    background: #e8f0fe;
+    border-radius: 8px;
+    color: #0b57d0;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    line-height: 36px;
+    margin-top: 12px;
+    padding: 8px 14px;
+}
+
+.pairing-form {
+    align-items: center;
+    border: 1px solid #c4c7c5;
+    border-radius: 8px;
+    display: flex;
+    height: 38px;
+    margin-top: 12px;
+    max-width: 220px;
+    padding: 0 10px;
+    width: 100%;
+}
+
+.pairing-form span {
+    color: #5f6368;
+    font-size: 12px;
+    margin-right: 8px;
+}
+
+.pairing-form input {
+    border: 0;
+    flex: 1;
+    font: inherit;
+    min-width: 0;
+    outline: 0;
+}
+
+.panel-action {
+    margin-top: 14px;
+}
+
+.qr-preview {
+    border: 1px solid #dadce0;
+    border-radius: 8px;
+    display: block;
+    height: 180px;
+    margin-top: 18px;
+    object-fit: contain;
+    width: 180px;
+}
+
 @media (max-width: 1120px) {
     .app-shell,
     .app-shell.mail-open {
@@ -1587,6 +1819,11 @@ button {
         width: 35px;
     }
 
+    .profile-avatar-img {
+        height: 29px;
+        width: 29px;
+    }
+
     .avatar-face {
         height: 29px;
         width: 29px;
@@ -1650,6 +1887,11 @@ button {
     .profile-avatar {
         height: 34px;
         width: 34px;
+    }
+
+    .profile-avatar-img {
+        height: 28px;
+        width: 28px;
     }
 
     .avatar-face {

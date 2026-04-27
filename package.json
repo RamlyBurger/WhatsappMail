@@ -4,13 +4,32 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:vite\"",
+    "dev:vite": "vite",
+    "dev:server": "tsx watch server/index.ts",
+    "server": "tsx server/index.ts",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "check": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^25.6.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "baileys": "^7.0.0-rc.9",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
+    "qrcode": "^1.5.4"
   }
 }
