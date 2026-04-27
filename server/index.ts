@@ -12,6 +12,7 @@ import makeWASocket, {
     type Chat,
     type ConnectionState as BaileysConnectionState,
     type Contact,
+    type GroupMetadata,
     type MessageUserReceiptUpdate,
     type proto,
     type WAMessage,
@@ -194,6 +195,8 @@ class LocalWhatsAppService {
     private readonly messages = new Map<string, NormalizedMessage[]>();
     private readonly rawMessages = new Map<string, WAMessage>();
     private readonly profilePictureRequests = new Set<string>();
+    private readonly groupMetadataRequests = new Set<string>();
+    private readonly lidMappingRequests = new Set<string>();
     private readonly historyRequests = new Set<string>();
     private readonly ownerAliases = new Set<string>();
 
@@ -517,6 +520,7 @@ class LocalWhatsAppService {
 
         for (const chat of sourceChats.slice(offset, offset + limit)) {
             this.queueProfilePictureFetch(chat.remoteJid);
+            this.queueGroupParticipantResolutionForChat(chat);
             if (this.needsGroupActivityTargetHydration(chat.lastActivity)) {
                 this.queueChatHistoryFetch(chat.remoteJid, chat.lastActivity);
             }
@@ -567,8 +571,11 @@ class LocalWhatsAppService {
         const start = Math.max(0, end - safeLimit);
         const messages = allMessages.slice(start, end);
         for (const message of messages) {
-            if (jid.endsWith("@g.us") && !message.fromMe && message.participant && !message.senderProfilePicUrl) {
-                this.queueContactProfilePictureFetch(message.participant, jid);
+            if (jid.endsWith("@g.us") && !message.fromMe && message.participant) {
+                if (!message.senderProfilePicUrl || this.isUnresolvedParticipantName(message.senderName)) {
+                    this.queueParticipantResolution(jid, message.participant);
+                    this.queueChatHistoryFetch(jid, message);
+                }
             }
             for (const reaction of message.reactions ?? []) {
                 if (!reaction.fromMe && reaction.senderJid) {
@@ -2191,12 +2198,24 @@ class LocalWhatsAppService {
     }
 
     private mergeContact(existing: Contact | undefined, incoming: Partial<Contact>, fallbackId: string): Contact {
+        const incomingId = incoming.id ? stripDeviceSuffix(incoming.id) : "";
+        const incomingLid = incoming.lid
+            ? stripDeviceSuffix(incoming.lid)
+            : incomingId.endsWith("@lid")
+              ? incomingId
+              : undefined;
+        const incomingPhoneNumber = incoming.phoneNumber
+            ? stripDeviceSuffix(incoming.phoneNumber)
+            : incomingId.endsWith("@s.whatsapp.net")
+              ? incomingId
+              : undefined;
+
         return {
             ...(existing ?? { id: fallbackId }),
             ...incoming,
-            id: existing?.id ?? incoming.id ?? fallbackId,
-            lid: incoming.lid ?? existing?.lid,
-            phoneNumber: incoming.phoneNumber ?? existing?.phoneNumber,
+            id: existing?.id ?? incomingPhoneNumber ?? incomingId ?? fallbackId,
+            lid: incomingLid ?? existing?.lid,
+            phoneNumber: incomingPhoneNumber ?? existing?.phoneNumber,
             name: incoming.name || existing?.name,
             notify: incoming.notify || existing?.notify,
             verifiedName: incoming.verifiedName || existing?.verifiedName,
@@ -2207,7 +2226,19 @@ class LocalWhatsAppService {
 
     private contactForJid(jid: string): Contact | undefined {
         const normalizedJid = stripDeviceSuffix(jid);
-        return this.contacts.get(normalizedJid);
+        const direct = this.contacts.get(normalizedJid);
+        if (direct) {
+            return direct;
+        }
+
+        for (const contact of this.contacts.values()) {
+            if (this.contactAliases(contact).includes(normalizedJid)) {
+                this.contacts.set(normalizedJid, contact);
+                return contact;
+            }
+        }
+
+        return undefined;
     }
 
     private chatWithResolvedSenders(chat: LocalChatProjection): LocalChatProjection {
@@ -2262,6 +2293,15 @@ class LocalWhatsAppService {
             : undefined;
     }
 
+    private isUnresolvedParticipantName(value: unknown): boolean {
+        const text = String(value ?? "").trim();
+        return !text
+            || text === "Someone"
+            || text === "WhatsApp user"
+            || text === "a participant"
+            || isIdentifierLike(text);
+    }
+
     private groupDisplayNameForJid(jid: string, fallback?: string): string {
         const contact = this.contactForJid(jid);
         const record = contact as (Contact & {
@@ -2294,8 +2334,8 @@ class LocalWhatsAppService {
             return jidToDisplayName(normalizedJid);
         }
 
-        const fallbackText = String(fallback ?? "").trim();
-        return fallbackText && fallbackText !== "Someone" && fallbackText !== "WhatsApp user" ? fallbackText : "Someone";
+        const fallbackText = this.displayNameCandidate(fallback);
+        return fallbackText ?? "Someone";
     }
 
     private groupTargetDisplayNameForJid(jid: string, fallback?: string): string {
@@ -2389,6 +2429,196 @@ class LocalWhatsAppService {
             .filter((message): message is WAMessage => Boolean(message?.key?.remoteJid && message.key.id));
     }
 
+    private queueGroupParticipantResolutionForChat(chat: LocalChatProjection): void {
+        const jid = stripDeviceSuffix(chat.remoteJid);
+        if (!jid.endsWith("@g.us")) {
+            return;
+        }
+
+        const candidates = [chat.lastActivity, chat.lastMessage].filter((message): message is NormalizedMessage => Boolean(message?.participant && !message.fromMe));
+        if (!candidates.length) {
+            return;
+        }
+
+        for (const message of candidates) {
+            const resolved = this.messageWithResolvedSender(message, jid, chat);
+            if (!resolved.participant) {
+                continue;
+            }
+
+            if (!resolved.senderProfilePicUrl || this.isUnresolvedParticipantName(resolved.senderName)) {
+                this.queueParticipantResolution(jid, resolved.participant);
+                this.queueChatHistoryFetch(jid, resolved);
+            }
+        }
+    }
+
+    private queueParticipantResolution(groupJid: string, participantJid: string): void {
+        const jid = stripDeviceSuffix(groupJid);
+        const participant = stripDeviceSuffix(participantJid);
+        if (!jid.endsWith("@g.us") || !participant) {
+            return;
+        }
+
+        this.queueGroupMetadataFetch(jid);
+        this.queueLidMappingFetch(participant, jid);
+        this.queueContactProfilePictureFetch(participant, jid);
+    }
+
+    private queueGroupMetadataFetch(remoteJid: string): void {
+        const jid = stripDeviceSuffix(remoteJid);
+        if (
+            !jid.endsWith("@g.us")
+            || this.groupMetadataRequests.has(jid)
+            || !this.socket
+            || this.snapshot.status !== "open"
+        ) {
+            return;
+        }
+
+        const socket = this.socket;
+        this.groupMetadataRequests.add(jid);
+        void Promise.race([
+            socket.groupMetadata(jid).then((metadata) => metadata as GroupMetadata | null),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 12_000)),
+        ])
+            .then((metadata) => {
+                if (metadata) {
+                    this.applyGroupMetadata(metadata);
+                    return;
+                }
+
+                return this.fetchGroupMetadataFromParticipating(jid);
+            })
+            .catch(() => this.fetchGroupMetadataFromParticipating(jid))
+            .finally(() => {
+                setTimeout(() => {
+                    this.groupMetadataRequests.delete(jid);
+                }, 10 * 60 * 1000);
+            });
+    }
+
+    private async fetchGroupMetadataFromParticipating(jid: string): Promise<void> {
+        if (!this.socket || this.snapshot.status !== "open") {
+            return;
+        }
+
+        const socket = this.socket;
+        const groups = await Promise.race([
+            socket.groupFetchAllParticipating(),
+            new Promise<Record<string, GroupMetadata>>((resolve) => setTimeout(() => resolve({}), 12_000)),
+        ]);
+        const metadata = groups[jid];
+        if (metadata) {
+            this.applyGroupMetadata(metadata);
+        }
+    }
+
+    private applyGroupMetadata(metadata: GroupMetadata): void {
+        const jid = stripDeviceSuffix(metadata.id);
+        if (!jid.endsWith("@g.us")) {
+            return;
+        }
+
+        const chat = this.ensureChat(jid);
+        if (metadata.subject) {
+            this.applyChatName(chat, metadata.subject, true);
+        }
+        chat.raw = {
+            ...chat.raw as object,
+            ...metadata,
+            id: jid,
+        };
+
+        if (Array.isArray(metadata.participants) && metadata.participants.length) {
+            this.handleContacts(metadata.participants);
+            this.queueVisibleGroupParticipantProfilePictures(jid);
+        }
+
+        this.updateChatActivity(jid);
+        this.queuePersist();
+        this.hub.publish({
+            type: "messages.update",
+            data: {
+                chats: true,
+                groupMetadata: true,
+                remoteJid: jid,
+            },
+        });
+    }
+
+    private queueLidMappingFetch(lidJid: string, notifyRemoteJid?: string): void {
+        const lid = stripDeviceSuffix(lidJid);
+        if (
+            !lid.endsWith("@lid")
+            || this.lidMappingRequests.has(lid)
+            || !this.socket
+            || this.snapshot.status !== "open"
+        ) {
+            return;
+        }
+
+        this.lidMappingRequests.add(lid);
+        void this.socket.signalRepository.lidMapping.getPNForLID(lid)
+            .then((phoneJid) => {
+                const pn = phoneJid ? stripDeviceSuffix(phoneJid) : "";
+                if (!pn) {
+                    return;
+                }
+
+                const existing = this.contactForJid(lid) ?? this.contactForJid(pn);
+                const merged = this.mergeContact(existing, {
+                    id: existing?.id ?? lid,
+                    lid,
+                    phoneNumber: pn,
+                }, lid);
+
+                for (const alias of this.contactAliases(merged)) {
+                    this.contacts.set(alias, merged);
+                }
+
+                this.queueContactProfilePictureFetch(pn, notifyRemoteJid);
+                this.queuePersist();
+                this.hub.publish({
+                    type: "messages.update",
+                    data: {
+                        chats: true,
+                        lidMapping: true,
+                        remoteJid: notifyRemoteJid ? stripDeviceSuffix(notifyRemoteJid) : pn,
+                    },
+                });
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                setTimeout(() => {
+                    this.lidMappingRequests.delete(lid);
+                }, 10 * 60 * 1000);
+            });
+    }
+
+    private queueVisibleGroupParticipantProfilePictures(groupJid: string): void {
+        const jid = stripDeviceSuffix(groupJid);
+        if (!jid.endsWith("@g.us")) {
+            return;
+        }
+
+        const chat = this.chats.get(jid);
+        const participants = new Set<string>();
+        for (const message of [
+            chat?.lastActivity,
+            chat?.lastMessage,
+            ...(this.messages.get(jid) ?? []).slice(-25),
+        ]) {
+            if (message?.participant && !message.fromMe && !this.profilePictureUrlForJid(message.participant)) {
+                participants.add(message.participant);
+            }
+        }
+
+        for (const participant of participants) {
+            this.queueContactProfilePictureFetch(participant, jid);
+        }
+    }
+
     private validProfilePictureUrl(value: unknown): string | undefined {
         return typeof value === "string" && value && value !== "changed" ? value : undefined;
     }
@@ -2453,6 +2683,9 @@ class LocalWhatsAppService {
     private queueContactProfilePictureFetch(remoteJid: string, notifyRemoteJid?: string): void {
         const originalJid = stripDeviceSuffix(remoteJid);
         const lookupJid = this.profilePictureLookupJid(originalJid);
+        if (originalJid.endsWith("@lid") && lookupJid.endsWith("@lid")) {
+            this.queueLidMappingFetch(originalJid, notifyRemoteJid);
+        }
         if (
             !lookupJid
             || lookupJid === "status@broadcast"

@@ -1352,6 +1352,80 @@ button {
     margin-bottom: 0;
 }
 
+.message-body strong {
+    font-weight: 700;
+}
+
+.message-body em {
+    font-style: italic;
+}
+
+.message-body s {
+    text-decoration: line-through;
+}
+
+.wa-inline-code,
+.wa-code-block {
+    background: #f1f3f4;
+    border: 1px solid #dadce0;
+    color: #202124;
+    font-family: "Roboto Mono", Consolas, "Courier New", monospace;
+}
+
+.wa-inline-code {
+    border-radius: 4px;
+    font-size: .92em;
+    padding: 1px 4px;
+}
+
+.wa-code-block {
+    border-radius: 8px;
+    display: block;
+    font-size: 13px;
+    line-height: 19px;
+    margin: 0 0 18px;
+    max-width: 100%;
+    overflow: auto;
+    padding: 10px 12px;
+    white-space: pre-wrap;
+}
+
+.wa-code-block code {
+    background: transparent;
+    border: 0;
+    font: inherit;
+    padding: 0;
+}
+
+.wa-quote {
+    border-left: 3px solid #dadce0;
+    color: #3c4043;
+    margin: 0 0 18px;
+    padding: 0 0 0 12px;
+}
+
+.wa-quote p {
+    margin-bottom: 8px;
+}
+
+.wa-list {
+    margin: 0 0 18px 21px;
+    padding: 0;
+}
+
+.wa-list li {
+    margin: 0 0 6px;
+    padding-left: 2px;
+}
+
+.wa-list li:last-child,
+.wa-quote p:last-child,
+.wa-code-block:last-child,
+.wa-list:last-child,
+.wa-quote:last-child {
+    margin-bottom: 0;
+}
+
 .message-body .verification-code {
     font-size: 21px;
     font-weight: 700;
