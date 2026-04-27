@@ -13,6 +13,7 @@ import makeWASocket, {
     type ConnectionState as BaileysConnectionState,
     type Contact,
     type MessageUserReceiptUpdate,
+    type proto,
     type WAMessage,
     type WAMessageUpdate,
     type WASocket,
@@ -28,6 +29,7 @@ import {
     contactSavedName,
     isIdentifierLike,
     keySignature,
+    normalizeMessageReaction,
     normalizeMessageReceipt,
     normalizeInputJid,
     normalizeLocalChat,
@@ -273,11 +275,23 @@ class LocalWhatsAppService {
                         this.needsHistoryRefresh = true;
                     }
 
+                    const normalizedFromRaw = message.raw
+                        ? normalizeWAMessage(message.raw as WAMessage, this.snapshot.ownerJid ?? "")
+                        : null;
+                    const hydratedMessage = normalizedFromRaw
+                        ? {
+                            ...message,
+                            ...normalizedFromRaw,
+                            senderName: message.senderName || normalizedFromRaw.senderName,
+                            receipt: normalizedFromRaw.receipt ?? message.receipt,
+                        }
+                        : message;
+
                     unique.set(message.id, {
-                        ...message,
+                        ...hydratedMessage,
                         remoteJid: normalizedJid,
                         key: {
-                            ...message.key,
+                            ...hydratedMessage.key,
                             remoteJid: normalizedJid,
                         },
                     });
@@ -320,7 +334,7 @@ class LocalWhatsAppService {
             mkdirSync(this.config.dataDir, { recursive: true });
 
             const stripMessageRaw = (message: NormalizedMessage): NormalizedMessage => {
-                if (message.media) {
+                if (message.media || message.reactions?.length || message.forwarded) {
                     return message;
                 }
 
@@ -405,6 +419,10 @@ class LocalWhatsAppService {
                     ...message.media,
                     url: `/api/media/${encodeURIComponent(jid)}/${encodeURIComponent(message.id)}`,
                 } : undefined,
+                reactions: message.reactions?.map((reaction) => ({
+                    ...reaction,
+                    senderName: reaction.fromMe ? "me" : this.displayNameForJid(reaction.senderJid ?? "", reaction.senderName),
+                })),
             }))
             .sort((a, b) => a.timestamp - b.timestamp);
         if (allMessages.some((message) => message.media && !this.rawMessages.has(keySignature(message.key)) && !message.raw)) {
@@ -634,6 +652,16 @@ class LocalWhatsAppService {
                 text: reaction,
             },
         });
+        this.applyReactionToMessage(protoKeyFromNormalized(key), {
+            key: {
+                remoteJid: this.snapshot.ownerJid ?? key.remoteJid,
+                fromMe: true,
+                id: key.id,
+            },
+            text: reaction,
+            senderTimestampMs: Date.now(),
+        });
+        this.queuePersist();
         this.publishMessagesChanged("messages.update");
     }
 
@@ -738,6 +766,9 @@ class LocalWhatsAppService {
         });
         socket.ev.on("message-receipt.update", (updates) => {
             this.handleMessageReceipts(updates);
+        });
+        socket.ev.on("messages.reaction", (updates) => {
+            this.handleMessageReactions(updates);
         });
         socket.ev.on("messages.delete", () => {
             this.publishMessagesChanged("messages.update");
@@ -969,6 +1000,106 @@ class LocalWhatsAppService {
         this.publishMessagesChanged("messages.update");
     }
 
+    private handleMessageReactions(updates: BaileysEventMap["messages.reaction"]): void {
+        let changed = false;
+        for (const update of updates) {
+            changed = this.applyReactionToMessage(update.key, update.reaction) || changed;
+        }
+
+        if (!changed) {
+            return;
+        }
+
+        this.queuePersist();
+        this.publishMessagesChanged("messages.update");
+    }
+
+    private applyReactionMessage(raw: WAMessage): boolean {
+        const reactionMessage = raw.message?.reactionMessage;
+        if (!reactionMessage?.key) {
+            return false;
+        }
+
+        return this.applyReactionToMessage(reactionMessage.key, {
+            key: raw.key,
+            text: reactionMessage.text ?? "",
+            senderTimestampMs: timestampSeconds(raw.messageTimestamp) * 1000,
+        });
+    }
+
+    private applyReactionToMessage(targetKey: proto.IMessageKey | WhatsAppMessageKey | null | undefined, reaction: proto.IReaction): boolean {
+        const jid = targetKey?.remoteJid ? stripDeviceSuffix(targetKey.remoteJid) : "";
+        const messageId = targetKey?.id ?? "";
+        if (!jid || !messageId) {
+            return false;
+        }
+
+        const list = this.messages.get(jid);
+        const message = list?.find((item) => item.id === messageId);
+        if (!message) {
+            return false;
+        }
+
+        const actor = this.reactionActorSignature(reaction);
+        const normalized = normalizeMessageReaction(reaction, this.snapshot.ownerJid ?? "", jid);
+        const existing = message.reactions ?? [];
+
+        if (!normalized) {
+            message.reactions = existing.filter((item) => this.normalizedReactionActorSignature(item) !== actor);
+        } else {
+            normalized.senderName = normalized.fromMe
+                ? "me"
+                : this.displayNameForJid(normalized.senderJid ?? "", normalized.senderName);
+
+            const index = existing.findIndex((item) => this.normalizedReactionActorSignature(item) === actor);
+            message.reactions = index >= 0
+                ? existing.map((item, itemIndex) => itemIndex === index ? normalized : item)
+                : [...existing, normalized];
+        }
+
+        const signature = keySignature(message.key);
+        const raw = this.rawMessages.get(signature) ?? message.raw as WAMessage | undefined;
+        if (raw) {
+            raw.reactions = this.mergeRawReactions(raw.reactions, reaction);
+            this.rawMessages.set(signature, raw);
+            message.raw = raw;
+        }
+
+        return true;
+    }
+
+    private reactionActorSignature(reaction: proto.IReaction): string {
+        const key = reaction.key ?? {};
+        const senderJid = typeof key.participant === "string" && key.participant
+            ? key.participant
+            : typeof key.remoteJid === "string"
+              ? key.remoteJid
+              : "";
+
+        return stripDeviceSuffix(senderJid) || (key.fromMe ? "me" : key.id ?? "unknown");
+    }
+
+    private normalizedReactionActorSignature(reaction: NonNullable<NormalizedMessage["reactions"]>[number]): string {
+        return reaction.senderJid ? stripDeviceSuffix(reaction.senderJid) : reaction.fromMe ? "me" : reaction.senderName ?? "unknown";
+    }
+
+    private mergeRawReactions(existing: WAMessage["reactions"] | null | undefined, incoming: proto.IReaction): NonNullable<WAMessage["reactions"]> {
+        const actor = this.reactionActorSignature(incoming);
+        const merged = new Map<string, proto.IReaction>();
+
+        for (const reaction of existing ?? []) {
+            merged.set(this.reactionActorSignature(reaction), reaction);
+        }
+
+        if (String(incoming.text ?? "").trim()) {
+            merged.set(actor, incoming);
+        } else {
+            merged.delete(actor);
+        }
+
+        return [...merged.values()];
+    }
+
     private mergeUserReceipts(existing: WAMessage["userReceipt"] | null | undefined, incoming: NonNullable<WAMessage["userReceipt"]>): NonNullable<WAMessage["userReceipt"]> {
         const merged = new Map<string, NonNullable<WAMessage["userReceipt"]>[number]>();
         for (const receipt of existing ?? []) {
@@ -988,6 +1119,11 @@ class LocalWhatsAppService {
 
     private saveRawMessage(raw: WAMessage | undefined, countUnread: boolean): NormalizedMessage | null {
         if (!raw) {
+            return null;
+        }
+
+        if (this.applyReactionMessage(raw)) {
+            this.queuePersist();
             return null;
         }
 

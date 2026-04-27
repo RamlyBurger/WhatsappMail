@@ -34,6 +34,14 @@ export interface WhatsAppReadReceipt {
     playedCount?: number;
 }
 
+export interface WhatsAppReaction {
+    text: string;
+    senderJid?: string;
+    senderName?: string;
+    fromMe?: boolean;
+    timestamp?: number;
+}
+
 export interface NormalizedMessage {
     id: string;
     remoteJid: string;
@@ -48,6 +56,9 @@ export interface NormalizedMessage {
     receipt?: WhatsAppReadReceipt;
     key: WhatsAppMessageKey;
     media?: WhatsAppMediaPreview;
+    reactions?: WhatsAppReaction[];
+    forwarded?: boolean;
+    forwardingScore?: number;
     raw?: unknown;
 }
 
@@ -314,6 +325,65 @@ function contentRecord(value: unknown): UnknownRecord {
     return typeof value === "string" ? { text: value } : asRecord(value);
 }
 
+function normalizeTimestampMs(value: unknown): number | undefined {
+    const timestamp = asNumber(value, 0);
+    if (!timestamp) {
+        return undefined;
+    }
+
+    return timestamp > 10_000_000_000 ? Math.floor(timestamp / 1000) : timestamp;
+}
+
+function extractForwardInfo(content: UnknownRecord): Pick<NormalizedMessage, "forwarded" | "forwardingScore"> {
+    const context = asRecord(content.contextInfo);
+    const forwardingScore = asNumber(context.forwardingScore, 0);
+    const forwarded = Boolean(context.isForwarded) || forwardingScore > 0;
+
+    return forwarded
+        ? {
+            forwarded: true,
+            ...(forwardingScore ? { forwardingScore } : {}),
+        }
+        : {};
+}
+
+export function normalizeMessageReaction(reaction: proto.IReaction, ownerJid = "", remoteJid = ""): WhatsAppReaction | null {
+    const text = asString(reaction.text).trim();
+    if (!text) {
+        return null;
+    }
+
+    const key = reaction.key ?? {};
+    const senderJid = stripDeviceSuffix(
+        optionalString(key.participant) ?? optionalString(key.remoteJid) ?? "",
+    );
+    const normalizedOwner = stripDeviceSuffix(ownerJid);
+    const normalizedRemote = stripDeviceSuffix(remoteJid);
+    const fromMe = Boolean(key.fromMe)
+        || Boolean(normalizedOwner && senderJid === normalizedOwner)
+        || Boolean(key.fromMe && senderJid === normalizedRemote);
+    const timestamp = normalizeTimestampMs(reaction.senderTimestampMs);
+
+    return {
+        text,
+        ...(senderJid ? { senderJid } : {}),
+        ...(fromMe ? { fromMe } : {}),
+        ...(timestamp ? { timestamp } : {}),
+    };
+}
+
+export function normalizeMessageReactions(reactions: unknown, ownerJid = "", remoteJid = ""): WhatsAppReaction[] | undefined {
+    if (!Array.isArray(reactions)) {
+        return undefined;
+    }
+
+    const normalized = reactions
+        .map((reaction) => normalizeMessageReaction(reaction as proto.IReaction, ownerJid, remoteJid))
+        .filter((reaction): reaction is WhatsAppReaction => Boolean(reaction));
+
+    return normalized.length ? normalized : undefined;
+}
+
 function extractMessageText(contentType: string, content: UnknownRecord): { text: string; subject: string; media?: WhatsAppMediaPreview } {
     if (contentType === "conversation" || contentType === "extendedTextMessage") {
         const text = asString(content.text || content.conversation);
@@ -438,6 +508,7 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
 
     const content = contentRecord(normalizedContent?.[contentType as keyof MessageContent]);
     const extracted = extractMessageText(contentType, content);
+    const forwardInfo = extractForwardInfo(content);
     const timestamp = timestampSeconds(raw.messageTimestamp);
     const participantFromEnvelope = optionalString(asRecord(raw).participant);
     const participant = raw.key.participant
@@ -469,6 +540,8 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
             participant,
         },
         media: extracted.media,
+        reactions: normalizeMessageReactions(asRecord(raw).reactions, ownerJid, remoteJid),
+        ...forwardInfo,
         raw,
     };
 }

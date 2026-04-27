@@ -1223,6 +1223,48 @@ button {
     margin-bottom: 17px;
 }
 
+.forwarded-label {
+    align-items: center;
+    color: #5f6368;
+    display: inline-flex;
+    font-size: 12px;
+    gap: 6px;
+    line-height: 16px;
+    margin: 0 0 8px;
+}
+
+.forwarded-label .material-symbols-outlined {
+    color: #5f6368;
+    font-size: 16px;
+}
+
+.message-reactions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.reaction-chip {
+    align-items: center;
+    background: #f1f3f4;
+    border: 1px solid #dadce0;
+    border-radius: 14px;
+    color: #202124;
+    display: inline-flex;
+    font-size: 14px;
+    gap: 4px;
+    min-height: 26px;
+    padding: 2px 9px;
+}
+
+.reaction-chip strong {
+    color: #5f6368;
+    font-size: 12px;
+    font-weight: 500;
+}
+
 .media-preview {
     margin: 0 0 14px;
 }
@@ -1239,6 +1281,30 @@ button {
 .audio-preview audio {
     display: block;
     width: min(420px, 100%);
+}
+
+.sticker-preview {
+    margin-bottom: 14px;
+}
+
+.sticker-preview .sticker-image {
+    border-radius: 0;
+    max-height: 164px;
+    max-width: 164px;
+    object-fit: contain;
+}
+
+.sticker-unavailable {
+    align-items: center;
+    color: #5f6368;
+    display: inline-flex;
+    font-size: 14px;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.sticker-unavailable .material-symbols-outlined {
+    color: #5f6368;
 }
 
 .media-attachment {
@@ -1278,9 +1344,8 @@ button {
 }
 
 .reply-message {
-    border-top: 1px solid #e0e0e0;
     margin-top: 0;
-    padding-top: 16px;
+    padding-top: 0;
 }
 
 .reply-message .thread-avatar {

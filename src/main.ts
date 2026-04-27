@@ -468,7 +468,7 @@ function renderThreadPlaceholder(): string {
 }
 
 function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string {
-    const classes = ["thread-message", message.fromMe ? "from-me" : "", message.fromMe ? "reply-message" : ""]
+    const classes = ["thread-message", message.fromMe ? "from-me" : ""]
         .filter(Boolean)
         .join(" ");
     const sender = message.fromMe ? "me" : chat.isGroup ? message.senderName || "Someone" : chat.name;
@@ -493,8 +493,10 @@ function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string 
                     </div>
                 </header>
                 <div class="message-body">
+                    ${renderForwardedLabel(message)}
                     ${renderMessageMedia(message)}
                     ${renderMessageText(text)}
+                    ${renderMessageReactions(message)}
                 </div>
             </div>
         </article>
@@ -545,6 +547,49 @@ function receiptFromStatus(status: string | undefined): WhatsAppMessage["receipt
     };
 
     return map[normalized];
+}
+
+function renderForwardedLabel(message: WhatsAppMessage): string {
+    if (!message.forwarded) {
+        return "";
+    }
+
+    const label = message.forwardingScore && message.forwardingScore >= 5 ? "Forwarded many times" : "Forwarded";
+    return `<div class="forwarded-label">${icon("forward")}<span>${escapeHtml(label)}</span></div>`;
+}
+
+function renderMessageReactions(message: WhatsAppMessage): string {
+    if (!message.reactions?.length) {
+        return "";
+    }
+
+    const totals = new Map<string, { count: number; names: string[] }>();
+    for (const reaction of message.reactions) {
+        const text = reaction.text.trim();
+        if (!text) {
+            continue;
+        }
+
+        const current = totals.get(text) ?? { count: 0, names: [] };
+        current.count += 1;
+        current.names.push(reaction.fromMe ? "me" : reaction.senderName || "Someone");
+        totals.set(text, current);
+    }
+
+    if (!totals.size) {
+        return "";
+    }
+
+    return `
+        <div class="message-reactions" aria-label="Message reactions">
+            ${[...totals.entries()].map(([text, detail]) => `
+                <span class="reaction-chip" title="${escapeHtml(detail.names.join(", "))}">
+                    <span>${escapeHtml(text)}</span>
+                    ${detail.count > 1 ? `<strong>${detail.count}</strong>` : ""}
+                </span>
+            `).join("")}
+        </div>
+    `;
 }
 
 function renderThreadAvatar(chat: WhatsAppChatRow, message: WhatsAppMessage, sender: string): string {
@@ -598,6 +643,14 @@ function renderMessageMedia(message: WhatsAppMessage): string {
 
     if (message.media.kind === "audio" && message.media.url) {
         return `<figure class="media-preview audio-preview"><audio src="${escapeHtml(message.media.url)}" controls></audio></figure>`;
+    }
+
+    if (message.media.kind === "sticker") {
+        if (message.media.url) {
+            return `<figure class="media-preview sticker-preview" data-media-fallback="Sticker unavailable"><img class="media-image sticker-image" src="${escapeHtml(message.media.url)}" alt="Sticker"></figure>`;
+        }
+
+        return `<div class="sticker-unavailable">${icon("sticky_note_2")}<span>Sticker unavailable</span></div>`;
     }
 
     return `
@@ -1404,7 +1457,21 @@ async function reactToMessage(messageId: string): Promise<void> {
     }
 
     await sendReaction(message.key, reaction);
+    const existing = message.reactions ?? [];
+    message.reactions = reaction.trim()
+        ? [
+            ...existing.filter((item) => !item.fromMe),
+            {
+                text: reaction.trim(),
+                senderJid: state.connection?.ownerJid ?? undefined,
+                senderName: "me",
+                fromMe: true,
+                timestamp: Math.floor(Date.now() / 1000),
+            },
+        ]
+        : existing.filter((item) => !item.fromMe);
     showToast(reaction ? "Reaction sent" : "Reaction removed");
+    render();
 }
 
 async function connectWhatsApp(): Promise<void> {

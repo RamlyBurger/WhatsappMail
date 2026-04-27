@@ -31,6 +31,14 @@ export interface WhatsAppReadReceipt {
     playedCount?: number;
 }
 
+export interface WhatsAppReaction {
+    text: string;
+    senderJid?: string;
+    senderName?: string;
+    fromMe?: boolean;
+    timestamp?: number;
+}
+
 export interface WhatsAppMessage {
     id: string;
     remoteJid: string;
@@ -45,6 +53,9 @@ export interface WhatsAppMessage {
     receipt?: WhatsAppReadReceipt;
     key: WhatsAppMessageKey;
     media?: WhatsAppMediaPreview;
+    reactions?: WhatsAppReaction[];
+    forwarded?: boolean;
+    forwardingScore?: number;
 }
 
 export interface WhatsAppChatRow {

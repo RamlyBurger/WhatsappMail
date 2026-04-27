@@ -1,0 +1,1208 @@
+- generic [ref=e5576]:
+  - complementary [ref=e5577]:
+    - button "Collapse main menu" [expanded] [ref=e5578] [cursor=pointer]:
+      - generic [ref=e5579]: menu
+    - navigation "Google apps" [ref=e5580]:
+      - button "mail Mail" [ref=e5581] [cursor=pointer]:
+        - generic [ref=e5583]: mail
+        - generic [ref=e5584]: Mail
+      - button "chat_bubble Chat" [ref=e5585] [cursor=pointer]:
+        - generic [ref=e5587]: chat_bubble
+        - generic [ref=e5588]: Chat
+      - button "videocam Meet" [ref=e5589] [cursor=pointer]:
+        - generic [ref=e5591]: videocam
+        - generic [ref=e5592]: Meet
+  - banner [ref=e5593]:
+    - img "Gmail" [ref=e5594]
+  - banner [ref=e5595]:
+    - generic [ref=e5596]:
+      - generic [ref=e5597]: search
+      - searchbox "Search mail" [ref=e5598]
+      - generic [ref=e5599]: tune
+    - generic [ref=e5600]:
+      - button "Help" [ref=e5601] [cursor=pointer]:
+        - generic [ref=e5602]: help
+      - button "Settings" [ref=e5603] [cursor=pointer]:
+        - generic [ref=e5604]: settings
+      - button "Connection" [ref=e5605] [cursor=pointer]:
+        - generic [ref=e5606]: auto_awesome
+      - button "Google apps" [ref=e5607] [cursor=pointer]:
+        - generic [ref=e5608]: apps
+      - button "Google account" [ref=e5609] [cursor=pointer]
+  - complementary [ref=e5612]:
+    - button "edit Compose" [ref=e5613] [cursor=pointer]:
+      - generic [ref=e5614]: edit
+      - generic [ref=e5615]: Compose
+    - navigation "Mail folders" [ref=e5616]:
+      - button "inbox Inbox" [ref=e5617] [cursor=pointer]:
+        - generic [ref=e5618]: inbox
+        - generic [ref=e5619]: Inbox
+      - button "star Starred" [ref=e5620] [cursor=pointer]:
+        - generic [ref=e5621]: star
+        - generic [ref=e5622]: Starred
+      - button "schedule Snoozed" [ref=e5623] [cursor=pointer]:
+        - generic [ref=e5624]: schedule
+        - generic [ref=e5625]: Snoozed
+      - button "send Sent" [ref=e5626] [cursor=pointer]:
+        - generic [ref=e5627]: send
+        - generic [ref=e5628]: Sent
+      - button "draft Drafts" [ref=e5629] [cursor=pointer]:
+        - generic [ref=e5630]: draft
+        - generic [ref=e5631]: Drafts
+      - button "expand_more label Categories" [ref=e5632] [cursor=pointer]:
+        - generic [ref=e5633]: expand_more
+        - generic [ref=e5634]: label
+        - generic [ref=e5635]: Categories
+      - button "expand_more More" [ref=e5636] [cursor=pointer]:
+        - generic [ref=e5637]: expand_more
+        - generic [ref=e5638]: More
+    - generic [ref=e5639]:
+      - generic [ref=e5640]: Labels
+      - button "Add label" [ref=e5641] [cursor=pointer]:
+        - generic [ref=e5642]: add
+    - generic [ref=e5643]: Local WhatsApp session
+  - main [ref=e5644]:
+    - generic [ref=e5645]:
+      - generic [ref=e5646]:
+        - button "Select" [ref=e5647] [cursor=pointer]:
+          - generic [ref=e5649]: arrow_drop_down
+        - button "Refresh" [ref=e5650] [cursor=pointer]:
+          - generic [ref=e5651]: refresh
+        - button "More" [ref=e5652] [cursor=pointer]:
+          - generic [ref=e5653]: more_vert
+      - generic [ref=e5654]:
+        - generic [ref=e5655]: 1–50 of 100
+        - button "Previous" [ref=e5656] [cursor=pointer]:
+          - generic [ref=e5657]: chevron_left
+        - button "Next" [ref=e5658] [cursor=pointer]:
+          - generic [ref=e5659]: chevron_right
+        - button "Keyboard" [ref=e5660] [cursor=pointer]:
+          - generic [ref=e5661]: 拼
+          - generic [ref=e5662]: arrow_drop_down
+    - region "Inbox chats" [ref=e5663]:
+      - article [ref=e5664] [cursor=pointer]:
+        - generic [ref=e5665]:
+          - button "Select Song Yan" [ref=e5666]
+          - button "Star Song Yan" [ref=e5668]:
+            - generic [ref=e5669]: star
+        - generic [ref=e5670]: Song Yan
+        - generic [ref=e5673]: Sticker
+        - time [ref=e5674]: 9:47 PM
+      - article [ref=e5675] [cursor=pointer]:
+        - generic [ref=e5676]:
+          - button "Select Lee Zhi Hua" [ref=e5677]
+          - button "Star Lee Zhi Hua" [ref=e5679]:
+            - generic [ref=e5680]: star
+        - generic [ref=e5681]: Lee Zhi Hua
+        - generic [ref=e5683]:
+          - generic "Delivered" [ref=e5684]:
+            - generic [ref=e5685]: done_all
+          - generic [ref=e5686]: "You:"
+          - generic [ref=e5687]: 哈哈今天没有
+        - time [ref=e5688]: 6:15 PM
+      - article [ref=e5689] [cursor=pointer]:
+        - generic [ref=e5690]:
+          - button "Select Tan Vey Hong" [ref=e5691]
+          - button "Star Tan Vey Hong" [ref=e5693]:
+            - generic [ref=e5694]: star
+        - generic [ref=e5695]: Tan Vey Hong
+        - generic [ref=e5697]:
+          - generic "Read" [ref=e5698]:
+            - generic [ref=e5699]: done_all
+          - generic [ref=e5700]: "You:"
+          - generic [ref=e5701]: connect过去
+        - time [ref=e5702]: 2:38 PM
+      - article [ref=e5703] [cursor=pointer]:
+        - generic [ref=e5704]:
+          - button "Select Ethan" [ref=e5705]
+          - button "Star Ethan" [ref=e5707]:
+            - generic [ref=e5708]: star
+        - generic [ref=e5709]: Ethan
+        - generic [ref=e5712]: 这个很强
+        - time [ref=e5713]: 2:33 PM
+      - article [ref=e5714] [cursor=pointer]:
+        - generic [ref=e5715]:
+          - button "Select Cik Shuhada" [ref=e5716]
+          - button "Star Cik Shuhada" [ref=e5718]:
+            - generic [ref=e5719]: star
+        - generic [ref=e5720]: Cik Shuhada
+        - generic [ref=e5723]: Oraitt
+        - time [ref=e5724]: 2:22 PM
+      - article [ref=e5725] [cursor=pointer]:
+        - generic [ref=e5726]:
+          - button "Select Haerine" [ref=e5727]
+          - button "Star Haerine" [ref=e5729]:
+            - generic [ref=e5730]: star
+        - generic [ref=e5731]: Haerine
+        - generic [ref=e5734]: Sticker
+        - time [ref=e5735]: 10:43 AM
+      - article [ref=e5736] [cursor=pointer]:
+        - generic [ref=e5737]:
+          - button "Select CS" [ref=e5738]
+          - button "Star CS" [ref=e5740]:
+            - generic [ref=e5741]: star
+        - generic [ref=e5742]:
+          - generic [ref=e5743]: C
+          - text: CS
+        - generic [ref=e5745]: https://www.facebook.com/share/v/1H2JkCSQ59/
+        - time [ref=e5746]: Apr 26
+      - article [ref=e5747] [cursor=pointer]:
+        - generic [ref=e5748]:
+          - button "Select 专业打Hamburger" [ref=e5749]
+          - button "Star 专业打Hamburger" [ref=e5751]:
+            - generic [ref=e5752]: star
+        - generic [ref=e5753]: 专业打Hamburger
+        - generic [ref=e5755]:
+          - generic [ref=e5756]:
+            - generic [ref=e5757]: Group
+            - text: "Someone:"
+          - generic [ref=e5758]: Sticker
+        - time [ref=e5759]: Apr 26
+      - article [ref=e5760] [cursor=pointer]:
+        - generic [ref=e5761]:
+          - button "Select Low Nam Lee" [ref=e5762]
+          - button "Star Low Nam Lee" [ref=e5764]:
+            - generic [ref=e5765]: star
+        - generic [ref=e5766]: Low Nam Lee
+        - generic [ref=e5768]:
+          - generic "Read" [ref=e5769]:
+            - generic [ref=e5770]: done_all
+          - generic [ref=e5771]: "You:"
+          - generic [ref=e5772]: http://xhslink.com/o/AMk8DzGyFwV
+        - time [ref=e5773]: Apr 25
+      - article [ref=e5774] [cursor=pointer]:
+        - generic [ref=e5775]:
+          - button "Select GT MSW TYM Rockacc" [ref=e5776]
+          - button "Star GT MSW TYM Rockacc" [ref=e5778]:
+            - generic [ref=e5779]: star
+        - generic [ref=e5780]: GT MSW TYM Rockacc
+        - generic [ref=e5782]:
+          - generic [ref=e5783]:
+            - generic [ref=e5784]: Group
+            - text: "Someone:"
+          - generic [ref=e5785]: Image message
+        - time [ref=e5786]: Apr 24
+      - article [ref=e5787] [cursor=pointer]:
+        - generic [ref=e5788]:
+          - button "Select Kai Liang" [ref=e5789]
+          - button "Star Kai Liang" [ref=e5791]:
+            - generic [ref=e5792]: star
+        - generic [ref=e5793]: Kai Liang
+        - generic [ref=e5795]:
+          - generic "Delivered" [ref=e5796]:
+            - generic [ref=e5797]: done_all
+          - generic [ref=e5798]: "You: Sticker"
+        - time [ref=e5799]: Apr 24
+      - article [ref=e5800] [cursor=pointer]:
+        - generic [ref=e5801]:
+          - button "Select TARUMT JH SRC 2025/2026" [ref=e5802]
+          - button "Star TARUMT JH SRC 2025/2026" [ref=e5804]:
+            - generic [ref=e5805]: star
+        - generic [ref=e5806]: TARUMT JH SRC 2025/2026
+        - generic [ref=e5808]:
+          - generic [ref=e5809]:
+            - generic [ref=e5810]: Group
+            - text: "Someone:"
+          - generic [ref=e5811]: Dear Societies President & Vice President, We kindly request all societies to submit the details of your latest 2026/27 term committee leadership. Please ensure that the information provided is accurate and up to date. https://forms.gle/724qG4tsJvmpM5L18 Thank you for your cooperation.
+        - time [ref=e5812]: Apr 23
+      - article [ref=e5813] [cursor=pointer]:
+        - generic [ref=e5814]:
+          - button "Select Zeyu" [ref=e5815]
+          - button "Star Zeyu" [ref=e5817]:
+            - generic [ref=e5818]: star
+        - generic [ref=e5819]: Zeyu
+        - generic [ref=e5822]: 哈哈哈
+        - time [ref=e5823]: Apr 23
+      - article [ref=e5824] [cursor=pointer]:
+        - generic [ref=e5825]:
+          - button "Select Crew member 3v3 Streetball Championship" [ref=e5826]
+          - button "Star Crew member 3v3 Streetball Championship" [ref=e5828]:
+            - generic [ref=e5829]: star
+        - generic [ref=e5830]: Crew member 3v3 Streetball Championship
+        - generic [ref=e5832]:
+          - generic [ref=e5833]:
+            - generic [ref=e5834]: Group
+            - text: "Someone:"
+          - generic [ref=e5835]: "@all 明天有去的穿着轻便，短裤，拖鞋就好了。 记得早上吃饱了才来，带水。"
+        - time [ref=e5836]: Apr 23
+      - article [ref=e5837] [cursor=pointer]:
+        - generic [ref=e5838]:
+          - button "Select BANTUAN ONE OFF MAHASISWA JOHOR SESI 3/2026" [ref=e5839]
+          - button "Star BANTUAN ONE OFF MAHASISWA JOHOR SESI 3/2026" [ref=e5841]:
+            - generic [ref=e5842]: star
+        - generic [ref=e5843]: BANTUAN ONE OFF MAHASISWA JOHOR SESI 3/2026
+        - generic [ref=e5845]:
+          - generic [ref=e5846]:
+            - generic [ref=e5847]: Group
+            - text: "Someone:"
+          - generic [ref=e5848]: https://ohmymedia.cc/malaysia-perkukuh-pertahanan-siber-upnm-digesa-lahir-pemimpin-kuasai-ai
+        - time [ref=e5849]: Apr 23
+      - article [ref=e5850] [cursor=pointer]:
+        - generic [ref=e5851]:
+          - button "Select Cicak Team" [ref=e5852]
+          - button "Star Cicak Team" [ref=e5854]:
+            - generic [ref=e5855]: star
+        - generic [ref=e5856]: Cicak Team
+        - generic [ref=e5858]:
+          - generic [ref=e5859]:
+            - generic [ref=e5860]: Group
+            - text: "Someone:"
+          - generic [ref=e5861]: Sticker
+        - time [ref=e5862]: Apr 23
+      - article [ref=e5863] [cursor=pointer]:
+        - generic [ref=e5864]:
+          - button "Select Insurance比赛🤩 (复仇者联盟)" [ref=e5865]
+          - button "Star Insurance比赛🤩 (复仇者联盟)" [ref=e5867]:
+            - generic [ref=e5868]: star
+        - generic [ref=e5869]:
+          - generic [ref=e5870]: I
+          - text: Insurance比赛🤩 (复仇者联盟)
+        - generic [ref=e5871]:
+          - generic "Read" [ref=e5872]:
+            - generic [ref=e5873]: done_all
+          - generic [ref=e5874]:
+            - generic [ref=e5875]: Group
+            - text: "You:"
+          - generic [ref=e5876]: 哈哈哈哈笑死我！
+        - time [ref=e5877]: Apr 23
+      - article [ref=e5878] [cursor=pointer]:
+        - generic [ref=e5879]:
+          - button "Select Jacky" [ref=e5880]
+          - button "Star Jacky" [ref=e5882]:
+            - generic [ref=e5883]: star
+        - generic [ref=e5884]: Jacky
+        - generic [ref=e5886]:
+          - generic [ref=e5887]: Image
+          - generic [ref=e5888]: "- Image message"
+        - time [ref=e5889]: Apr 23
+      - article [ref=e5890] [cursor=pointer]:
+        - generic [ref=e5891]:
+          - button "Select 711" [ref=e5892]
+          - button "Star 711" [ref=e5894]:
+            - generic [ref=e5895]: star
+        - generic [ref=e5896]: "711"
+        - generic [ref=e5899]: Alternatively, you may try logging in to the portal again from time to time.
+        - time [ref=e5900]: Apr 21
+      - article [ref=e5901] [cursor=pointer]:
+        - generic [ref=e5902]:
+          - button "Select Eric" [ref=e5903]
+          - button "Star Eric" [ref=e5905]:
+            - generic [ref=e5906]: star
+        - generic [ref=e5907]: Eric
+        - generic [ref=e5909]:
+          - generic "Read" [ref=e5910]:
+            - generic [ref=e5911]: done_all
+          - generic [ref=e5912]: "You: Sticker"
+        - time [ref=e5913]: Apr 21
+      - article [ref=e5914] [cursor=pointer]:
+        - generic [ref=e5915]:
+          - button "Select 鬼灭之刃" [ref=e5916]
+          - button "Star 鬼灭之刃" [ref=e5918]:
+            - generic [ref=e5919]: star
+        - generic [ref=e5920]: 鬼灭之刃
+        - generic [ref=e5922]:
+          - generic [ref=e5923]:
+            - generic [ref=e5924]: Group
+            - text: "Someone:"
+          - generic [ref=e5925]: Sticker
+        - time [ref=e5926]: Apr 19
+      - article [ref=e5927] [cursor=pointer]:
+        - generic [ref=e5928]:
+          - button "Select andrew" [ref=e5929]
+          - button "Star andrew" [ref=e5931]:
+            - generic [ref=e5932]: star
+        - generic [ref=e5933]:
+          - generic [ref=e5934]: A
+          - text: andrew
+        - generic [ref=e5936]: "andrew, The link you shared leads to **OpenAI’s Usage Policies**, which outline how their models and services can and cannot be used. These policies are designed to ensure the technology is used safely and responsibly. Here is a high-level summary of the prohibited uses according to those policies: ### 1. Illegal Activity You cannot use OpenAI services for any illegal activities, such as promoting child sexual abuse material, human trafficking, or coordinating criminal acts. ### 2. High Risk of Physical Harm The models may not be used for: * **Weapons development:** Designing or using weapons/explosives. * **Management of critical infrastructure:** High-risk areas like water or energy grids. * **Self-harm:** Encouraging or providing instructions for self-harm or suicide. ### 3. Fraudulent or Deceptive Activity Prohibited uses include: * **Scams and Phishing:** Creating deceptive content to steal information or money. * **Impersonation:** Creating content that falsely represents a person or organization without consent. * **Plagiarism:** Misrepresenting the AI-generated output as being entirely human-generated. ### 4. Hateful, Harassing, or Violent Content You may not generate content that: * Promotes violence or incites hatred against groups based on race, religion, gender, etc. * Is used to bully, threaten, or harass individuals. ### 5. Adult Content The models are not to be used to generate sexually explicit content, including pornography or non-consensual sexual imagery. ### 6. Political Campaigning and Lobbying OpenAI restricts use for: * Generating high volumes of campaign materials. * Targeting specific demographics for political persuasion. * Disseminating misinformation about voting processes. ### 7. Privacy Violations You cannot use the services to process personal data in a way that violates privacy laws or to engage in unauthorized facial recognition. ### 8. Unauthorized Practice of Law or Medicine While the AI can provide general information, it should not be used to provide: * **Legal advice** (without a qualified human lawyer in the loop). * **Medical advice/diagnoses** for serious conditions (it is not a substitute for professional medical care). ### 9. High-Risk Economic Decisions This includes automated decision-making in areas like: * **Lending and Credit:** Determining eligibility for loans. * **Employment:** Screening resumes or ranking candidates without human oversight. **Why these matter:** Violating these policies can lead to account suspension or termination. If you are building an application using OpenAI's API, you are responsible for ensuring your users also adhere to these rules."
+        - time [ref=e5937]: Apr 19
+      - article [ref=e5938] [cursor=pointer]:
+        - generic [ref=e5939]:
+          - button "Select Group 2 FWDxTARUMT" [ref=e5940]
+          - button "Star Group 2 FWDxTARUMT" [ref=e5942]:
+            - generic [ref=e5943]: star
+        - generic [ref=e5944]:
+          - generic [ref=e5945]: G
+          - text: Group 2 FWDxTARUMT
+        - generic [ref=e5946]:
+          - generic [ref=e5947]:
+            - generic [ref=e5948]: Group
+            - text: "Someone:"
+          - generic [ref=e5949]: Hi Students, On behalf of FWD, we would like to sincerely thank all of you for your participation and effort in our sponsored project. Today marks the final day of your business presentations, well done for coming this far! 👏💪🏻 We truly appreciate your dedication, creativity, and willingness to step out of your comfort zone. Keep this momentum going, continue to learn, grow, and pursue your journey towards success. ✨ We’re happy to stay connected with you for any internship or career opportunities with FWD in the future. The results will be announced soon, and we look forward to seeing all of you at the closing ceremony in KL! All the best, and see you very soon! 🧡
+        - time [ref=e5950]: Apr 18
+      - article [ref=e5951] [cursor=pointer]:
+        - generic [ref=e5952]:
+          - button "Select FWD Grand Finale" [ref=e5953]
+          - button "Star FWD Grand Finale" [ref=e5955]:
+            - generic [ref=e5956]: star
+        - generic [ref=e5957]:
+          - generic [ref=e5958]: F
+          - text: FWD Grand Finale
+        - generic [ref=e5959]:
+          - generic [ref=e5960]:
+            - generic [ref=e5961]: Group
+            - text: "Someone:"
+          - generic [ref=e5962]: Mayb can use this
+        - time [ref=e5963]: Apr 18
+      - article [ref=e5964] [cursor=pointer]:
+        - generic [ref=e5965]:
+          - button "Select MS" [ref=e5966]
+          - button "Star MS" [ref=e5968]:
+            - generic [ref=e5969]: star
+        - generic [ref=e5970]: MS
+        - generic [ref=e5972]:
+          - generic "Delivered" [ref=e5973]:
+            - generic [ref=e5974]: done_all
+          - generic [ref=e5975]: "You:"
+          - generic [ref=e5976]: 起床了
+        - time [ref=e5977]: Apr 17
+      - article [ref=e5978] [cursor=pointer]:
+        - generic [ref=e5979]:
+          - button "Select Jason Lee" [ref=e5980]
+          - button "Star Jason Lee" [ref=e5982]:
+            - generic [ref=e5983]: star
+        - generic [ref=e5984]: Jason Lee
+        - generic [ref=e5986]:
+          - generic "Read (delivered to 1, read by 1)" [ref=e5987]:
+            - generic [ref=e5988]: done_all
+          - generic [ref=e5989]: "You:"
+          - generic [ref=e5990]: https://store.steampowered.com/app/978520/Legend_of_Keepers_Career_of_a_Dungeon_Manager/
+        - time [ref=e5991]: Apr 17
+      - article [ref=e5992] [cursor=pointer]:
+        - generic [ref=e5993]:
+          - button "Select TAR UMT JHB 202205 June" [ref=e5994]
+          - button "Star TAR UMT JHB 202205 June" [ref=e5996]:
+            - generic [ref=e5997]: star
+        - generic [ref=e5998]: TAR UMT JHB 202205 June
+        - generic [ref=e6000]:
+          - generic [ref=e6001]:
+            - generic [ref=e6002]: Group
+            - text: "Someone:"
+          - generic [ref=e6003]: Image message
+        - time [ref=e6004]: Apr 16
+      - article [ref=e6005] [cursor=pointer]:
+        - generic [ref=e6006]:
+          - button "Select TARUMT Squad Game" [ref=e6007]
+          - button "Star TARUMT Squad Game" [ref=e6009]:
+            - generic [ref=e6010]: star
+        - generic [ref=e6011]: TARUMT Squad Game
+        - generic [ref=e6013]:
+          - generic [ref=e6014]:
+            - generic [ref=e6015]: Group
+            - text: "Someone:"
+          - generic [ref=e6016]: It was an amazing experience ~~
+        - time [ref=e6017]: Apr 16
+      - article [ref=e6018] [cursor=pointer]:
+        - generic [ref=e6019]:
+          - button "Select Eren Yeager" [ref=e6020]
+          - button "Star Eren Yeager" [ref=e6022]:
+            - generic [ref=e6023]: star
+        - generic [ref=e6024]:
+          - generic [ref=e6025]: E
+          - text: Eren Yeager
+        - generic [ref=e6026]:
+          - generic [ref=e6027]: Image
+          - generic [ref=e6028]: "- Image message"
+        - time [ref=e6029]: Apr 15
+      - article [ref=e6030] [cursor=pointer]:
+        - generic [ref=e6031]:
+          - button "Select FWD Johor Finalist 12/1/2026 - TARUMT Perak" [ref=e6032]
+          - button "Star FWD Johor Finalist 12/1/2026 - TARUMT Perak" [ref=e6034]:
+            - generic [ref=e6035]: star
+        - generic [ref=e6036]:
+          - generic [ref=e6037]: F
+          - text: FWD Johor Finalist 12/1/2026 - TARUMT Perak
+        - generic [ref=e6038]:
+          - generic [ref=e6039]:
+            - generic [ref=e6040]: Group
+            - text: "Someone:"
+          - generic [ref=e6041]: Image message
+        - time [ref=e6042]: Apr 15
+      - article [ref=e6043] [cursor=pointer]:
+        - generic [ref=e6044]:
+          - button "Select +60127259126" [ref=e6045]
+          - button "Star +60127259126" [ref=e6047]:
+            - generic [ref=e6048]: star
+        - generic [ref=e6049]: "+60127259126"
+        - generic [ref=e6052]: I’m Jacob
+        - time [ref=e6053]: Apr 15
+      - article [ref=e6054] [cursor=pointer]:
+        - generic [ref=e6055]:
+          - button "Select Esther" [ref=e6056]
+          - button "Star Esther" [ref=e6058]:
+            - generic [ref=e6059]: star
+        - generic [ref=e6060]: Esther
+        - generic [ref=e6063]: ok，tq
+        - time [ref=e6064]: Apr 14
+      - article [ref=e6065] [cursor=pointer]:
+        - generic [ref=e6066]:
+          - button "Select Loh Jia Xian" [ref=e6067]
+          - button "Star Loh Jia Xian" [ref=e6069]:
+            - generic [ref=e6070]: star
+        - generic [ref=e6071]: Loh Jia Xian
+        - generic [ref=e6074]: Sticker
+        - time [ref=e6075]: Apr 14
+      - article [ref=e6076] [cursor=pointer]:
+        - generic [ref=e6077]:
+          - button "Select +827 3835066 5863" [ref=e6078]
+          - button "Star +827 3835066 5863" [ref=e6080]:
+            - generic [ref=e6081]: star
+        - generic [ref=e6082]: +827 3835066 5863
+        - generic [ref=e6084]:
+          - generic "Delivered" [ref=e6085]:
+            - generic [ref=e6086]: done_all
+          - generic [ref=e6087]: "You: Sticker"
+        - time [ref=e6088]: Apr 12
+      - article [ref=e6089] [cursor=pointer]:
+        - generic [ref=e6090]:
+          - button "Select Meta AI" [ref=e6091]
+          - button "Star Meta AI" [ref=e6093]:
+            - generic [ref=e6094]: star
+        - generic [ref=e6095]: Meta AI
+        - generic [ref=e6097]:
+          - generic "Read" [ref=e6098]:
+            - generic [ref=e6099]: done_all
+          - generic [ref=e6100]: "You:"
+          - generic [ref=e6101]: 还不错，最新的新闻呢？
+        - time [ref=e6102]: Apr 12
+      - article [ref=e6103] [cursor=pointer]:
+        - generic [ref=e6104]:
+          - button "Select Ms Ng" [ref=e6105]
+          - button "Star Ms Ng" [ref=e6107]:
+            - generic [ref=e6108]: star
+        - generic [ref=e6109]:
+          - generic [ref=e6110]: M
+          - text: Ms Ng
+        - generic [ref=e6111]:
+          - generic "Read" [ref=e6112]:
+            - generic [ref=e6113]: done_all
+          - generic [ref=e6114]: "You: Sticker"
+        - time [ref=e6115]: Apr 11
+      - article [ref=e6116] [cursor=pointer]:
+        - generic [ref=e6117]:
+          - button "Select Tee Wen Jie" [ref=e6118]
+          - button "Star Tee Wen Jie" [ref=e6120]:
+            - generic [ref=e6121]: star
+        - generic [ref=e6122]: Tee Wen Jie
+        - generic [ref=e6125]: Sticker
+        - time [ref=e6126]: Apr 11
+      - article [ref=e6127] [cursor=pointer]:
+        - generic [ref=e6128]:
+          - button "Select Agoda Customer Service" [ref=e6129]
+          - button "Star Agoda Customer Service" [ref=e6131]:
+            - generic [ref=e6132]: star
+        - generic [ref=e6133]: Agoda Customer Service
+        - generic [ref=e6136]: template
+        - time [ref=e6137]: Apr 11
+      - article [ref=e6138] [cursor=pointer]:
+        - generic [ref=e6139]:
+          - button "Select Pn Noriza" [ref=e6140]
+          - button "Star Pn Noriza" [ref=e6142]:
+            - generic [ref=e6143]: star
+        - generic [ref=e6144]: Pn Noriza
+        - generic [ref=e6146]:
+          - generic "Read" [ref=e6147]:
+            - generic [ref=e6148]: done_all
+          - generic [ref=e6149]: "You:"
+          - generic [ref=e6150]: next time can come out
+        - time [ref=e6151]: Apr 11
+      - article [ref=e6152] [cursor=pointer]:
+        - generic [ref=e6153]:
+          - button "Select Jia Le" [ref=e6154]
+          - button "Star Jia Le" [ref=e6156]:
+            - generic [ref=e6157]: star
+        - generic [ref=e6158]: Jia Le
+        - generic [ref=e6160]:
+          - generic "Read" [ref=e6161]:
+            - generic [ref=e6162]: done_all
+          - generic [ref=e6163]: "You: Document"
+          - generic [ref=e6164]: "- (INDIVIDUAL INDEMNITY AND EMERGENCY INFORMATION FORM) - Low Nam Lee.docx"
+        - time [ref=e6165]: Apr 10
+      - article [ref=e6166] [cursor=pointer]:
+        - generic [ref=e6167]:
+          - button "Select ShunWen" [ref=e6168]
+          - button "Star ShunWen" [ref=e6170]:
+            - generic [ref=e6171]: star
+        - generic [ref=e6172]: ShunWen
+        - generic [ref=e6174]:
+          - generic "Read" [ref=e6175]:
+            - generic [ref=e6176]: done_all
+          - generic [ref=e6177]: "You:"
+          - generic [ref=e6178]: 要加可以加
+        - time [ref=e6179]: Apr 10
+      - article [ref=e6180] [cursor=pointer]:
+        - generic [ref=e6181]:
+          - button "Select 0" [ref=e6182]
+          - button "Star 0" [ref=e6184]:
+            - generic [ref=e6185]: star
+        - generic [ref=e6186]:
+          - generic [ref=e6187]: "0"
+          - text: "0"
+        - generic [ref=e6189]: template
+        - time [ref=e6190]: Apr 7
+      - article [ref=e6191] [cursor=pointer]:
+        - generic [ref=e6192]:
+          - button "Select BMIT305C 202601" [ref=e6193]
+          - button "Star BMIT305C 202601" [ref=e6195]:
+            - generic [ref=e6196]: star
+        - generic [ref=e6197]: BMIT305C 202601
+        - generic [ref=e6199]:
+          - generic [ref=e6200]:
+            - generic [ref=e6201]: Group
+            - text: "Someone:"
+          - generic [ref=e6202]: To those students who haven't submitted the March Monthly Report, please remember to submit before 11:59pm today ya.
+        - time [ref=e6203]: Apr 4
+      - article [ref=e6204] [cursor=pointer]:
+        - generic [ref=e6205]:
+          - button "Select Test" [ref=e6206]
+          - button "Star Test" [ref=e6208]:
+            - generic [ref=e6209]: star
+        - generic [ref=e6210]:
+          - generic [ref=e6211]: T
+          - text: Test
+        - generic [ref=e6212]:
+          - generic [ref=e6213]:
+            - generic [ref=e6214]: Group
+            - text: "Someone:"
+          - generic [ref=e6215]: Sticker
+        - time [ref=e6216]: Apr 2
+      - article [ref=e6217] [cursor=pointer]:
+        - generic [ref=e6218]:
+          - button "Select Andrey" [ref=e6219]
+          - button "Star Andrey" [ref=e6221]:
+            - generic [ref=e6222]: star
+        - generic [ref=e6223]: Andrey
+        - generic [ref=e6225]:
+          - generic "Read" [ref=e6226]:
+            - generic [ref=e6227]: done_all
+          - generic [ref=e6228]: "You: Image"
+          - generic [ref=e6229]: "- We dont have registration link yet, maybe we can put qr code in the phone"
+        - time [ref=e6230]: Apr 2
+      - article [ref=e6231] [cursor=pointer]:
+        - generic [ref=e6232]:
+          - button "Select +601 54873 8194" [ref=e6233]
+          - button "Star +601 54873 8194" [ref=e6235]:
+            - generic [ref=e6236]: star
+        - generic [ref=e6237]: +601 54873 8194
+        - generic [ref=e6240]: placeholder
+        - time [ref=e6241]: Mar 24
+      - article [ref=e6242] [cursor=pointer]:
+        - generic [ref=e6243]:
+          - button "Select NextUP Hackathon 2025" [ref=e6244]
+          - button "Star NextUP Hackathon 2025" [ref=e6246]:
+            - generic [ref=e6247]: star
+        - generic [ref=e6248]:
+          - generic [ref=e6249]: "N"
+          - text: NextUP Hackathon 2025
+        - generic [ref=e6250]:
+          - generic [ref=e6251]:
+            - generic [ref=e6252]: Group
+            - text: "Someone:"
+          - generic [ref=e6253]: "*Participant Recruitment | 4th China-ASEAN Innovation & Entrepreneurship Competition (CAIEC)* _We are now inviting interested participants to join the 4th China-ASEAN Innovation & Entrepreneurship Competition (CAIEC)!_ This is an international platform for innovative projects and entrepreneurial teams to gain greater exposure, build valuable connections, and explore cross-border collaboration opportunities. If you are currently working on an innovation-driven project in areas such as technology, education, creative industries, platform services, or other high-potential ventures, you are encouraged to take part. *Link for registration:* https://caiec4th.zoholandingpage.com/ *Registration Deadline: 31 March 2026* *Meanwhile, please fill in the Google form for our internal record keeping purpose,* https://forms.gle/1Shuar7ukkedysob6 More info: 📞 011-10758542 (Wan Nee / Najwa) Thank you. *CBIEV*"
+        - time [ref=e6254]: Mar 24
+      - article [ref=e6255] [cursor=pointer]:
+        - generic [ref=e6256]:
+          - button "Select Vigaram Samy" [ref=e6257]
+          - button "Star Vigaram Samy" [ref=e6259]:
+            - generic [ref=e6260]: star
+        - generic [ref=e6261]:
+          - generic [ref=e6262]: V
+          - text: Vigaram Samy
+        - generic [ref=e6264]: Ya sure
+        - time [ref=e6265]: Mar 22
+      - article [ref=e6266] [cursor=pointer]:
+        - generic [ref=e6267]:
+          - button "Select Lei Lei" [ref=e6268]
+          - button "Star Lei Lei" [ref=e6270]:
+            - generic [ref=e6271]: star
+        - generic [ref=e6272]: Lei Lei
+        - generic [ref=e6275]: Sticker
+        - time [ref=e6276]: Mar 21
+      - article [ref=e6277] [cursor=pointer]:
+        - generic [ref=e6278]:
+          - button "Select Hong Liang" [ref=e6279]
+          - button "Star Hong Liang" [ref=e6281]:
+            - generic [ref=e6282]: star
+        - generic [ref=e6283]: Hong Liang
+        - generic [ref=e6285]:
+          - generic "Delivered" [ref=e6286]:
+            - generic [ref=e6287]: done_all
+          - generic [ref=e6288]: "You:"
+          - generic [ref=e6289]: 没事下次再jo
+        - time [ref=e6290]: Mar 21
+      - article [ref=e6291] [cursor=pointer]:
+        - generic [ref=e6292]:
+          - button "Select Zong Hao" [ref=e6293]
+          - button "Star Zong Hao" [ref=e6295]:
+            - generic [ref=e6296]: star
+        - generic [ref=e6297]: Zong Hao
+        - generic [ref=e6300]: ok
+        - time [ref=e6301]: Mar 21
+      - article [ref=e6302] [cursor=pointer]:
+        - generic [ref=e6303]:
+          - button "Select Lee Kah Hoe" [ref=e6304]
+          - button "Star Lee Kah Hoe" [ref=e6306]:
+            - generic [ref=e6307]: star
+        - generic [ref=e6308]:
+          - generic [ref=e6309]: L
+          - text: Lee Kah Hoe
+        - generic [ref=e6310]:
+          - generic "Delivered" [ref=e6311]:
+            - generic [ref=e6312]: done_all
+          - generic [ref=e6313]: "You:"
+          - generic [ref=e6314]: 公司带员工参加hacking的比赛
+        - time [ref=e6315]: Mar 20
+      - article [ref=e6316] [cursor=pointer]:
+        - generic [ref=e6317]:
+          - button "Select RSD IT Team💪" [ref=e6318]
+          - button "Star RSD IT Team💪" [ref=e6320]:
+            - generic [ref=e6321]: star
+        - generic [ref=e6322]: RSD IT Team💪
+        - generic [ref=e6324]:
+          - generic [ref=e6325]:
+            - generic [ref=e6326]: Group
+            - text: "Someone:"
+          - generic [ref=e6327]: lol
+        - time [ref=e6328]: Mar 19
+      - article [ref=e6329] [cursor=pointer]:
+        - generic [ref=e6330]:
+          - button "Select +539 7559225 1460" [ref=e6331]
+          - button "Star +539 7559225 1460" [ref=e6333]:
+            - generic [ref=e6334]: star
+        - generic [ref=e6335]:
+          - generic [ref=e6336]: +
+          - text: +539 7559225 1460
+        - generic [ref=e6338]: placeholder
+        - time [ref=e6339]: Mar 15
+      - article [ref=e6340] [cursor=pointer]:
+        - generic [ref=e6341]:
+          - button "Select Ms Lee (Supervisor)" [ref=e6342]
+          - button "Star Ms Lee (Supervisor)" [ref=e6344]:
+            - generic [ref=e6345]: star
+        - generic [ref=e6346]:
+          - generic [ref=e6347]: M
+          - text: Ms Lee (Supervisor)
+        - generic [ref=e6348]:
+          - generic "Delivered" [ref=e6349]:
+            - generic [ref=e6350]: done_all
+          - generic [ref=e6351]: "You:"
+          - generic [ref=e6352]: Here's the updated version, thank you ms🙏🙏
+        - time [ref=e6353]: Mar 6
+      - article [ref=e6354] [cursor=pointer]:
+        - generic [ref=e6355]:
+          - button "Select Abdrazat Nora (GT - HR)" [ref=e6356]
+          - button "Star Abdrazat Nora (GT - HR)" [ref=e6358]:
+            - generic [ref=e6359]: star
+        - generic [ref=e6360]: Abdrazat Nora (GT - HR)
+        - generic [ref=e6362]:
+          - generic "Read" [ref=e6363]:
+            - generic [ref=e6364]: done_all
+          - generic [ref=e6365]: "You:"
+          - generic [ref=e6366]: cause I got a blood draw test in the morning only
+        - time [ref=e6367]: Feb 25
+      - article [ref=e6368] [cursor=pointer]:
+        - generic [ref=e6369]:
+          - button "Select Imperio (Melaka)" [ref=e6370]
+          - button "Star Imperio (Melaka)" [ref=e6372]:
+            - generic [ref=e6373]: star
+        - generic [ref=e6374]:
+          - generic [ref=e6375]: I
+          - text: Imperio (Melaka)
+        - generic [ref=e6376]:
+          - generic "Delivered" [ref=e6377]:
+            - generic [ref=e6378]: done_all
+          - generic [ref=e6379]: "You:"
+          - generic [ref=e6380]: Ok thx
+        - time [ref=e6381]: Feb 23
+      - article [ref=e6382] [cursor=pointer]:
+        - generic [ref=e6383]:
+          - button "Select Ng Wayne Xiang" [ref=e6384]
+          - button "Star Ng Wayne Xiang" [ref=e6386]:
+            - generic [ref=e6387]: star
+        - generic [ref=e6388]: Ng Wayne Xiang
+        - generic [ref=e6390]:
+          - generic "Read" [ref=e6391]:
+            - generic [ref=e6392]: done_all
+          - generic [ref=e6393]: "You: Sticker"
+        - time [ref=e6394]: Feb 16
+      - article [ref=e6395] [cursor=pointer]:
+        - generic [ref=e6396]:
+          - button "Select +884 3807430 2548" [ref=e6397]
+          - button "Star +884 3807430 2548" [ref=e6399]:
+            - generic [ref=e6400]: star
+        - generic [ref=e6401]: +884 3807430 2548
+        - generic [ref=e6403]:
+          - generic "Delivered" [ref=e6404]:
+            - generic [ref=e6405]: done_all
+          - generic [ref=e6406]: "You:"
+          - generic [ref=e6407]: Ok, thanks
+        - time [ref=e6408]: Feb 15
+      - article [ref=e6409] [cursor=pointer]:
+        - generic [ref=e6410]:
+          - button "Select BJ Canoeing - Klook" [ref=e6411]
+          - button "Star BJ Canoeing - Klook" [ref=e6413]:
+            - generic [ref=e6414]: star
+        - generic [ref=e6415]: BJ Canoeing - Klook
+        - generic [ref=e6417]:
+          - generic "Delivered" [ref=e6418]:
+            - generic [ref=e6419]: done_all
+          - generic [ref=e6420]: "You:"
+          - generic [ref=e6421]: Hi, just to confirm, so we have to wait at Bhukitta around 7 right? Do we need to bring any other thing?
+        - time [ref=e6422]: Feb 15
+      - article [ref=e6423] [cursor=pointer]:
+        - generic [ref=e6424]:
+          - 'button "Select Go Live: Deployment with Cloud Run & Firebase Workshop" [ref=e6425]'
+          - 'button "Star Go Live: Deployment with Cloud Run & Firebase Workshop" [ref=e6427]':
+            - generic [ref=e6428]: star
+        - generic [ref=e6429]: "Go Live: Deployment with Cloud Run & Firebase Workshop"
+        - generic [ref=e6431]:
+          - generic [ref=e6432]:
+            - generic [ref=e6433]: Group
+            - text: "Someone:"
+          - generic [ref=e6434]: https://docs.google.com/presentation/d/1fbtLbh-DEqsnxQ-Uli2BshZCtDkfHWIA68quPXrHxqQ/edit?usp=sharing Slides Access
+        - time [ref=e6435]: Feb 15
+      - article [ref=e6436] [cursor=pointer]:
+        - generic [ref=e6437]:
+          - button "Select Build a Real-World AI Assistant using Gemini API Workshop" [ref=e6438]
+          - button "Star Build a Real-World AI Assistant using Gemini API Workshop" [ref=e6440]:
+            - generic [ref=e6441]: star
+        - generic [ref=e6442]: Build a Real-World AI Assistant using Gemini API Workshop
+        - generic [ref=e6444]:
+          - generic [ref=e6445]:
+            - generic [ref=e6446]: Group
+            - text: "Someone:"
+          - generic [ref=e6447]: "Hi everyone! 👋 To ensure we can dive straight into the coding session, please find the source codes we'll be using attached below/at the link provided: 🔗 https://drive.google.com/drive/folders/1diH1Cg65xVO9hymMYamLjxUwLM5aORNa?usp=sharing"
+        - time [ref=e6448]: Feb 14
+      - article [ref=e6449] [cursor=pointer]:
+        - generic [ref=e6450]:
+          - button "Select Irene Pua (GT - HR Manager)" [ref=e6451]
+          - button "Star Irene Pua (GT - HR Manager)" [ref=e6453]:
+            - generic [ref=e6454]: star
+        - generic [ref=e6455]: Irene Pua (GT - HR Manager)
+        - generic [ref=e6457]:
+          - generic "Read" [ref=e6458]:
+            - generic [ref=e6459]: done_all
+          - generic [ref=e6460]: "You:"
+          - generic [ref=e6461]: "Yes"
+        - time [ref=e6462]: Feb 13
+      - article [ref=e6463] [cursor=pointer]:
+        - generic [ref=e6464]:
+          - button "Select Frontend Development With Flutter" [ref=e6465]
+          - button "Star Frontend Development With Flutter" [ref=e6467]:
+            - generic [ref=e6468]: star
+        - generic [ref=e6469]: Frontend Development With Flutter
+        - generic [ref=e6471]:
+          - generic [ref=e6472]:
+            - generic [ref=e6473]: Group
+            - text: "Someone:"
+          - generic [ref=e6474]: "Github Link: https://github.com/salmanfrds/id_starter"
+        - time [ref=e6475]: Feb 8
+      - article [ref=e6476] [cursor=pointer]:
+        - generic [ref=e6477]:
+          - button "Select Building a Full Stack AI Solution using Firebase Workshop" [ref=e6478]
+          - button "Star Building a Full Stack AI Solution using Firebase Workshop" [ref=e6480]:
+            - generic [ref=e6481]: star
+        - generic [ref=e6482]: Building a Full Stack AI Solution using Firebase Workshop
+        - generic [ref=e6484]:
+          - generic [ref=e6485]:
+            - generic [ref=e6486]: Group
+            - text: "Someone:"
+          - generic [ref=e6487]: "CodeLab Link: stepwik.com/labs/build-a-full-stack-ai-web-solution-with-firebase-llzsjr"
+        - time [ref=e6488]: Feb 7
+      - article [ref=e6489] [cursor=pointer]:
+        - generic [ref=e6490]:
+          - button "Select Jacky Assistant👋" [ref=e6491]
+          - button "Star Jacky Assistant👋" [ref=e6493]:
+            - generic [ref=e6494]: star
+        - generic [ref=e6495]: Jacky Assistant👋
+        - generic [ref=e6498]: Hii 你好👋，我是 Jacky 的助理 Hedy。我将会协助 Jacky 处理与完成顾客事项。 🚨 保单保费调整提醒 🚨 为了确保您的保单能够持续为您提供优质保障，保险公司近期对部分医疗计划的保费进行了调整。由于医疗成本上涨，您的保单保费将在未来4 年内逐步调整，以确保您的保障能够更长久地维持。 ✅ 自动保费调整详情： •⁠ ⁠2025年 保费增加 RM0.00， 保费维持每月 RM230.00 •⁠ ⁠未来 4 年调整方案（每年额外增加RM13）： * 2026 年：调整至 RM243.00 * 2027 年：调整至 RM256.00 * 2028 年：调整至 RM269.00 * 2029 年：调整至 RM282.00 🔹 您的选择： 1️⃣ 接受建议调整，提高保费，以确保保障的可持续性。 2️⃣ 继续维持现有保费，但未来可能需要额外调整或补充账户价值，以确保保障持续性 🔹 我们可以帮助您 我们希望能为你提供专业建议，协助您选择最适合的调整方案。欢迎与我们预约时间，让我们用专业经验为您服务！
+        - time [ref=e6499]: Feb 6
+      - article [ref=e6500] [cursor=pointer]:
+        - generic [ref=e6501]:
+          - button "Select +478 2890685 2453" [ref=e6502]
+          - button "Star +478 2890685 2453" [ref=e6504]:
+            - generic [ref=e6505]: star
+        - generic [ref=e6506]:
+          - generic [ref=e6507]: +
+          - text: +478 2890685 2453
+        - generic [ref=e6508]:
+          - generic "Delivered" [ref=e6509]:
+            - generic [ref=e6510]: done_all
+          - generic [ref=e6511]: "You:"
+          - generic [ref=e6512]: Ok, i've successfully logged in
+        - time [ref=e6513]: Feb 3
+      - article [ref=e6514] [cursor=pointer]:
+        - generic [ref=e6515]:
+          - button "Select +60∙∙∙∙∙∙∙59" [ref=e6516]
+          - button "Star +60∙∙∙∙∙∙∙59" [ref=e6518]:
+            - generic [ref=e6519]: star
+        - generic [ref=e6520]: +60∙∙∙∙∙∙∙59
+        - generic [ref=e6523]: alrighttt
+        - time [ref=e6524]: Feb 1
+      - article [ref=e6525] [cursor=pointer]:
+        - generic [ref=e6526]:
+          - button "Select Quote It Up ! Your First Android App with API Calls Workshop" [ref=e6527]
+          - button "Star Quote It Up ! Your First Android App with API Calls Workshop" [ref=e6529]:
+            - generic [ref=e6530]: star
+        - generic [ref=e6531]: Quote It Up ! Your First Android App with API Calls Workshop
+        - generic [ref=e6533]:
+          - generic [ref=e6534]:
+            - generic [ref=e6535]: Group
+            - text: "Someone:"
+          - generic [ref=e6536]: "Hello Everyone! Thank you very much for joining the workshop! I hope that all of you can learn a bit or two on Android Studio! Here are the resources that all of you can refer to , to test out your application and continuing your learning process along the way! Github Repo : https://github.com/nidqija/Quote_Generator_App/tree/master/app/src/main Installation Docs : https://docs.google.com/document/d/1SQkbzO5LO1lFIrF3QLHXQhmP_0Y7zCzPkNiZcJC_Rh4/edit?tab=t.0 Connect to Firebase : https://developer.android.com/studio/write/firebase Here are my socials if you need to connect with me! Linkedin : https://www.linkedin.com/in/raziqdin/ Instagram : https://www.instagram.com/rzqdin Dev.To : https://dev.to/raziq_din_bd0274cc2ac748b Again , thank you to the organizers , committee and participants for Kitahack 2026 for enabling me to conduct Quote It Up! Introduction to Android Studio Workshop. Apologies for any errors or misconduct of the workshop and looking forward to your next project with Android Studio! Cheers! Let me know if you need help with Android Studio as well! See you soon 😊"
+        - time [ref=e6537]: Feb 1
+      - article [ref=e6538] [cursor=pointer]:
+        - generic [ref=e6539]:
+          - button "Select Introduction To Web Development & APIs Workshop" [ref=e6540]
+          - button "Star Introduction To Web Development & APIs Workshop" [ref=e6542]:
+            - generic [ref=e6543]: star
+        - generic [ref=e6544]: Introduction To Web Development & APIs Workshop
+        - generic [ref=e6546]:
+          - generic [ref=e6547]:
+            - generic [ref=e6548]: Group
+            - text: "Someone:"
+          - generic [ref=e6549]: Image message
+        - time [ref=e6550]: Jan 31
+      - article [ref=e6551] [cursor=pointer]:
+        - generic [ref=e6552]:
+          - button "Select Zero To Hero Workshop" [ref=e6553]
+          - button "Star Zero To Hero Workshop" [ref=e6555]:
+            - generic [ref=e6556]: star
+        - generic [ref=e6557]: Zero To Hero Workshop
+        - generic [ref=e6559]:
+          - generic [ref=e6560]:
+            - generic [ref=e6561]: Group
+            - text: "Someone:"
+          - generic [ref=e6562]: Just to let everyone know, we will have a feedback form at the end of the session, which you are required to fill out if you want to receive your badges! So please make sure to tune in until the end. 🤩
+        - time [ref=e6563]: Jan 30
+      - article [ref=e6564] [cursor=pointer]:
+        - generic [ref=e6565]:
+          - button "Select KitaHack 2026 Workshops" [ref=e6566]
+          - button "Star KitaHack 2026 Workshops" [ref=e6568]:
+            - generic [ref=e6569]: star
+        - generic [ref=e6570]:
+          - generic [ref=e6571]: K
+          - text: KitaHack 2026 Workshops
+        - generic [ref=e6572]:
+          - generic [ref=e6573]:
+            - generic [ref=e6574]: Group
+            - text: Group chat
+          - generic [ref=e6575]: "- No recent messages"
+        - time [ref=e6576]: Jan 30
+      - article [ref=e6577] [cursor=pointer]:
+        - generic [ref=e6578]:
+          - button "Select +148 75198121 9948" [ref=e6579]
+          - button "Star +148 75198121 9948" [ref=e6581]:
+            - generic [ref=e6582]: star
+        - generic [ref=e6583]: +148 75198121 9948
+        - generic [ref=e6586]: Rm330 boss
+        - time [ref=e6587]: Jan 29
+      - article [ref=e6588] [cursor=pointer]:
+        - generic [ref=e6589]:
+          - button "Select +172 11693886 2664" [ref=e6590]
+          - button "Star +172 11693886 2664" [ref=e6592]:
+            - generic [ref=e6593]: star
+        - generic [ref=e6594]: +172 11693886 2664
+        - generic [ref=e6596]:
+          - generic "Delivered" [ref=e6597]:
+            - generic [ref=e6598]: done_all
+          - generic [ref=e6599]: "You:"
+          - generic [ref=e6600]: ok
+        - time [ref=e6601]: Jan 27
+      - article [ref=e6602] [cursor=pointer]:
+        - generic [ref=e6603]:
+          - button "Select +270 57866150 3231" [ref=e6604]
+          - button "Star +270 57866150 3231" [ref=e6606]:
+            - generic [ref=e6607]: star
+        - generic [ref=e6608]: +270 57866150 3231
+        - generic [ref=e6610]:
+          - generic "Read" [ref=e6611]:
+            - generic [ref=e6612]: done_all
+          - generic [ref=e6613]: "You:"
+          - generic [ref=e6614]: ok
+        - time [ref=e6615]: Jan 27
+      - article [ref=e6616] [cursor=pointer]:
+        - generic [ref=e6617]:
+          - button "Select +247 89697276 7357" [ref=e6618]
+          - button "Star +247 89697276 7357" [ref=e6620]:
+            - generic [ref=e6621]: star
+        - generic [ref=e6622]: +247 89697276 7357
+        - generic [ref=e6625]: Terima kasih kerana menghubungi IMIKA JB.. Bagaimana kami boleh bantu Encik/Puan hari ini? 😊 Thank you for contacting IMIKA JB.. How can we serve you today? 😊
+        - time [ref=e6626]: Jan 27
+      - article [ref=e6627] [cursor=pointer]:
+        - generic [ref=e6628]:
+          - button "Select +212 84151681 0295" [ref=e6629]
+          - button "Star +212 84151681 0295" [ref=e6631]:
+            - generic [ref=e6632]: star
+        - generic [ref=e6633]: +212 84151681 0295
+        - generic [ref=e6635]:
+          - generic "Delivered" [ref=e6636]:
+            - generic [ref=e6637]: done_all
+          - generic [ref=e6638]: "You:"
+          - generic [ref=e6639]: ok
+        - time [ref=e6640]: Jan 27
+      - article [ref=e6641] [cursor=pointer]:
+        - generic [ref=e6642]:
+          - button "Select +115 86566833 7797" [ref=e6643]
+          - button "Star +115 86566833 7797" [ref=e6645]:
+            - generic [ref=e6646]: star
+        - generic [ref=e6647]: +115 86566833 7797
+        - generic [ref=e6650]: RM 390.00 price valid until 30/01/2026 only.
+        - time [ref=e6651]: Jan 27
+      - article [ref=e6652] [cursor=pointer]:
+        - generic [ref=e6653]:
+          - button "Select Roshaiqal Ameen (GT - IT Support)" [ref=e6654]
+          - button "Star Roshaiqal Ameen (GT - IT Support)" [ref=e6656]:
+            - generic [ref=e6657]: star
+        - generic [ref=e6658]:
+          - generic [ref=e6659]: R
+          - text: Roshaiqal Ameen (GT - IT Support)
+        - generic [ref=e6661]: Ok can..please leave it at Grant Thornton receptionist ya..level 16
+        - time [ref=e6662]: Jan 27
+      - article [ref=e6663] [cursor=pointer]:
+        - generic [ref=e6664]:
+          - button "Select KitaHack 2026 Workshops" [ref=e6665]
+          - button "Star KitaHack 2026 Workshops" [ref=e6667]:
+            - generic [ref=e6668]: star
+        - generic [ref=e6669]:
+          - generic [ref=e6670]: K
+          - text: KitaHack 2026 Workshops
+        - generic [ref=e6671]:
+          - generic [ref=e6672]:
+            - generic [ref=e6673]: Group
+            - text: Group chat
+          - generic [ref=e6674]: "- No recent messages"
+        - time [ref=e6675]: Jan 25
+      - article [ref=e6676] [cursor=pointer]:
+        - generic [ref=e6677]:
+          - button "Select BMIT2073 Mobile Application Development (202505)" [ref=e6678]
+          - button "Star BMIT2073 Mobile Application Development (202505)" [ref=e6680]:
+            - generic [ref=e6681]: star
+        - generic [ref=e6682]:
+          - generic [ref=e6683]: B
+          - text: BMIT2073 Mobile Application Development (202505)
+        - generic [ref=e6684]:
+          - generic [ref=e6685]:
+            - generic [ref=e6686]: Group
+            - text: "Someone:"
+          - generic [ref=e6687]: Hi all, do you have found the internship company? Who else haven't yet?
+        - time [ref=e6688]: Jan 20
+      - article [ref=e6689] [cursor=pointer]:
+        - generic [ref=e6690]:
+          - button "Select Airbnb Melaka" [ref=e6691]
+          - button "Star Airbnb Melaka" [ref=e6693]:
+            - generic [ref=e6694]: star
+        - generic [ref=e6695]: Airbnb Melaka
+        - generic [ref=e6697]:
+          - generic "Delivered" [ref=e6698]:
+            - generic [ref=e6699]: done_all
+          - generic [ref=e6700]: "You:"
+          - generic [ref=e6701]: "*Hi, I'm staff from Maplehome Amber Cove!* *Our check-in time starts from 3:00 PM onwards. May I know what time you plan to check in today?😊* And as part of the residence house rules, we need to pre-register you as a visitor. Kindly provide the following details: Name: Low Nam Lee IC/Passport No: 020710011731 Phone Number: 601139688368 Car Plate No: JTN8998 Check-in Time: 3pm Thank you! 😊"
+        - time [ref=e6702]: Jan 15
+      - article [ref=e6703] [cursor=pointer]:
+        - generic [ref=e6704]:
+          - button "Select +195 37878371 9601" [ref=e6705]
+          - button "Star +195 37878371 9601" [ref=e6707]:
+            - generic [ref=e6708]: star
+        - generic [ref=e6709]: +195 37878371 9601
+        - generic [ref=e6712]: placeholder
+        - time [ref=e6713]: Jan 13
+      - article [ref=e6714] [cursor=pointer]:
+        - generic [ref=e6715]:
+          - button "Select Hangry Low" [ref=e6716]
+          - button "Star Hangry Low" [ref=e6718]:
+            - generic [ref=e6719]: star
+        - generic [ref=e6720]: Hangry Low
+        - generic [ref=e6723]: ok
+        - time [ref=e6724]: Jan 12
+      - article [ref=e6725] [cursor=pointer]:
+        - generic [ref=e6726]:
+          - button "Select wxlim (IFCA)" [ref=e6727]
+          - button "Star wxlim (IFCA)" [ref=e6729]:
+            - generic [ref=e6730]: star
+        - generic [ref=e6731]:
+          - generic [ref=e6732]: W
+          - text: wxlim (IFCA)
+        - generic [ref=e6734]: Ok, thanks.
+        - time [ref=e6735]: Jan 9
+      - article [ref=e6736] [cursor=pointer]:
+        - generic [ref=e6737]:
+          - button "Select FWD Reimagine Insurance Competition - Johor Team" [ref=e6738]
+          - button "Star FWD Reimagine Insurance Competition - Johor Team" [ref=e6740]:
+            - generic [ref=e6741]: star
+        - generic [ref=e6742]: FWD Reimagine Insurance Competition - Johor Team
+        - generic [ref=e6744]:
+          - generic [ref=e6745]:
+            - generic [ref=e6746]: Group
+            - text: "Someone:"
+          - generic [ref=e6747]: For the rest of the groups, good try 👍
+        - time [ref=e6748]: Jan 5
+      - article [ref=e6749] [cursor=pointer]:
+        - generic [ref=e6750]:
+          - button "Select Mr. Liaw" [ref=e6751]
+          - button "Star Mr. Liaw" [ref=e6753]:
+            - generic [ref=e6754]: star
+        - generic [ref=e6755]:
+          - generic [ref=e6756]: M
+          - text: Mr. Liaw
+        - generic [ref=e6758]: Sorry, please ignore this message, this is scammer website, because is raunc. cm... must be careful 对不起，这个是钓鱼网站，因为网址是raunc. cn诈骗网站来的
+        - time [ref=e6759]: Jan 4
+      - article [ref=e6760] [cursor=pointer]:
+        - generic [ref=e6761]:
+          - button "Select KLCC (Airbnb)" [ref=e6762]
+          - button "Star KLCC (Airbnb)" [ref=e6764]:
+            - generic [ref=e6765]: star
+        - generic [ref=e6766]: KLCC (Airbnb)
+        - generic [ref=e6768]:
+          - generic "Read" [ref=e6769]:
+            - generic [ref=e6770]: done_all
+          - generic [ref=e6771]: "You:"
+          - generic [ref=e6772]: Ok, got it
+        - time [ref=e6773]: Dec 28, 2025
+      - article [ref=e6774] [cursor=pointer]:
+        - generic [ref=e6775]:
+          - button "Select Airbnb (Neu Suite)" [ref=e6776]
+          - button "Star Airbnb (Neu Suite)" [ref=e6778]:
+            - generic [ref=e6779]: star
+        - generic [ref=e6780]: Airbnb (Neu Suite)
+        - generic [ref=e6782]:
+          - generic "Delivered" [ref=e6783]:
+            - generic [ref=e6784]: done_all
+          - generic [ref=e6785]: "You:"
+          - generic [ref=e6786]: checked out
+        - time [ref=e6787]: Dec 27, 2025
+      - article [ref=e6788] [cursor=pointer]:
+        - generic [ref=e6789]:
+          - button "Select +230 05594704 3063" [ref=e6790]
+          - button "Star +230 05594704 3063" [ref=e6792]:
+            - generic [ref=e6793]: star
+        - generic [ref=e6794]: +230 05594704 3063
+        - generic [ref=e6797]: placeholder
+        - time [ref=e6798]: Dec 26, 2025
+      - article [ref=e6799] [cursor=pointer]:
+        - generic [ref=e6800]:
+          - button "Select +137 46547826 7105" [ref=e6801]
+          - button "Star +137 46547826 7105" [ref=e6803]:
+            - generic [ref=e6804]: star
+        - generic [ref=e6805]: +137 46547826 7105
+        - generic [ref=e6808]: Tqw
+        - time [ref=e6809]: Dec 26, 2025
+      - article [ref=e6810] [cursor=pointer]:
+        - generic [ref=e6811]:
+          - button "Select Agoda (KLCC)" [ref=e6812]
+          - button "Star Agoda (KLCC)" [ref=e6814]:
+            - generic [ref=e6815]: star
+        - generic [ref=e6816]:
+          - generic [ref=e6817]: A
+          - text: Agoda (KLCC)
+        - generic [ref=e6818]:
+          - generic "Delivered" [ref=e6819]:
+            - generic [ref=e6820]: done_all
+          - generic [ref=e6821]: "You:"
+          - generic [ref=e6822]: I have message The Ms Kavie, she didnt reply
+        - time [ref=e6823]: Dec 25, 2025
+      - article [ref=e6824] [cursor=pointer]:
+        - generic [ref=e6825]:
+          - button "Select +109 96899698 2988" [ref=e6826]
+          - button "Star +109 96899698 2988" [ref=e6828]:
+            - generic [ref=e6829]: star
+        - generic [ref=e6830]: +109 96899698 2988
+        - generic [ref=e6833]: template
+        - time [ref=e6834]: Dec 19, 2025
+      - article [ref=e6835] [cursor=pointer]:
+        - generic [ref=e6836]:
+          - button "Select +101 89014669 7296" [ref=e6837]
+          - button "Star +101 89014669 7296" [ref=e6839]:
+            - generic [ref=e6840]: star
+        - generic [ref=e6841]: +101 89014669 7296
+        - generic [ref=e6844]: template
+        - time [ref=e6845]: Dec 18, 2025
+      - article [ref=e6846] [cursor=pointer]:
+        - generic [ref=e6847]:
+          - button "Select NextUp Hackathon 2025 - 3/12/25" [ref=e6848]
+          - button "Star NextUp Hackathon 2025 - 3/12/25" [ref=e6850]:
+            - generic [ref=e6851]: star
+        - generic [ref=e6852]: NextUp Hackathon 2025 - 3/12/25
+        - generic [ref=e6854]:
+          - generic [ref=e6855]:
+            - generic [ref=e6856]: Group
+            - text: "Someone:"
+          - generic [ref=e6857]: https://johor.tarc.edu.my/events/achievements
+        - time [ref=e6858]: Dec 17, 2025
+      - article [ref=e6859] [cursor=pointer]:
+        - generic [ref=e6860]:
+          - button "Select Elaine Tee (Huawei)" [ref=e6861]
+          - button "Star Elaine Tee (Huawei)" [ref=e6863]:
+            - generic [ref=e6864]: star
+        - generic [ref=e6865]: Elaine Tee (Huawei)
+        - generic [ref=e6867]:
+          - generic "Delivered" [ref=e6868]:
+            - generic [ref=e6869]: done_all
+          - generic [ref=e6870]: "You:"
+          - generic [ref=e6871]: Thanks, you too
+        - time [ref=e6872]: Dec 16, 2025
+      - article [ref=e6873] [cursor=pointer]:
+        - generic [ref=e6874]:
+          - button "Select Pn Zuriana" [ref=e6875]
+          - button "Star Pn Zuriana" [ref=e6877]:
+            - generic [ref=e6878]: star
+        - generic [ref=e6879]: Pn Zuriana
+        - generic [ref=e6881]:
+          - generic "Read" [ref=e6882]:
+            - generic [ref=e6883]: done_all
+          - generic [ref=e6884]: "You:"
+          - generic [ref=e6885]: Ok
+        - time [ref=e6886]: Dec 11, 2025
+      - article [ref=e6887] [cursor=pointer]:
+        - generic [ref=e6888]:
+          - button "Select KKKL" [ref=e6889]
+          - button "Star KKKL" [ref=e6891]:
+            - generic [ref=e6892]: star
+        - generic [ref=e6893]: KKKL
+        - generic [ref=e6895]:
+          - generic "Delivered" [ref=e6896]:
+            - generic [ref=e6897]: done_all
+          - generic [ref=e6898]: "You:"
+          - generic [ref=e6899]: thank you
+        - time [ref=e6900]: Dec 11, 2025
+      - article [ref=e6901] [cursor=pointer]:
+        - generic [ref=e6902]:
+          - button "Select Nicole (Yick Hoe)" [ref=e6903]
+          - button "Star Nicole (Yick Hoe)" [ref=e6905]:
+            - generic [ref=e6906]: star
+        - generic [ref=e6907]: Nicole (Yick Hoe)
+        - generic [ref=e6909]:
+          - generic "Read" [ref=e6910]:
+            - generic [ref=e6911]: done_all
+          - generic [ref=e6912]: "You:"
+          - generic [ref=e6913]: No problem
+        - time [ref=e6914]: Dec 9, 2025
+      - article [ref=e6915] [cursor=pointer]:
+        - generic [ref=e6916]:
+          - button "Select E4-10-09_051225" [ref=e6917]
+          - button "Star E4-10-09_051225" [ref=e6919]:
+            - generic [ref=e6920]: star
+        - generic [ref=e6921]:
+          - generic [ref=e6922]: E
+          - text: E4-10-09_051225
+        - generic [ref=e6923]:
+          - generic [ref=e6924]:
+            - generic [ref=e6925]: Group
+            - text: "Someone:"
+          - generic [ref=e6926]: Thanks for staying with us. It has been an honour to serve you and hope you had a Great Vacation !! 🙏 We appreciate your feedback to improve our Homestay. If you feel your stay was not 5⭐/10 Points worthy, please let us know so we can fix any issues and make your experience Great.👌
+        - time [ref=e6927]: Dec 6, 2025
+  - complementary [ref=e6928]:
+    - navigation "Google side panel" [ref=e6929]:
+      - button "Calendar" [ref=e6930] [cursor=pointer]:
+        - img "Calendar" [ref=e6931]
+      - button "Keep" [ref=e6932] [cursor=pointer]:
+        - img "Keep" [ref=e6933]
+      - button "Tasks" [ref=e6934] [cursor=pointer]:
+        - img "Tasks" [ref=e6935]
+      - button "Contacts" [ref=e6936] [cursor=pointer]:
+        - img "Contacts" [ref=e6937]
+      - button "WhatsApp" [ref=e6939] [cursor=pointer]
+      - button "Add-ons" [ref=e6941] [cursor=pointer]:
+        - generic [ref=e6942]: add
+    - button "Collapse side panel" [ref=e6943] [cursor=pointer]:
+      - generic [ref=e6944]: chevron_right
