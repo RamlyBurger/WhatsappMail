@@ -12,6 +12,7 @@ import makeWASocket, {
     type Chat,
     type ConnectionState as BaileysConnectionState,
     type Contact,
+    type MessageUserReceiptUpdate,
     type WAMessage,
     type WAMessageUpdate,
     type WASocket,
@@ -27,12 +28,14 @@ import {
     contactSavedName,
     isIdentifierLike,
     keySignature,
+    normalizeMessageReceipt,
     normalizeInputJid,
     normalizeLocalChat,
     normalizeWAMessage,
     protoKeyFromNormalized,
     stripDeviceSuffix,
     timestampSeconds,
+    withMessageReceipt,
     type LocalChatProjection,
     type NormalizedChat,
     type NormalizedMessage,
@@ -186,6 +189,7 @@ class LocalWhatsAppService {
     private readonly messages = new Map<string, NormalizedMessage[]>();
     private readonly rawMessages = new Map<string, WAMessage>();
     private readonly profilePictureRequests = new Set<string>();
+    private readonly historyRequests = new Set<string>();
 
     private snapshot: SessionSnapshot = {
         status: "idle",
@@ -263,6 +267,9 @@ class LocalWhatsAppService {
                     }
 
                     if (normalizedJid.endsWith("@g.us") && !message.fromMe && !message.participant) {
+                        this.needsHistoryRefresh = true;
+                    }
+                    if (message.media && !message.raw) {
                         this.needsHistoryRefresh = true;
                     }
 
@@ -391,16 +398,18 @@ class LocalWhatsAppService {
         const jid = normalizeInputJid(remoteJid);
         const chat = this.chats.get(jid);
         const allMessages = [...(this.messages.get(jid) ?? [])]
-            .map((message) => ({
+            .map((message) => withMessageReceipt({
                 ...message,
                 senderName: message.fromMe ? "me" : jid.endsWith("@g.us") ? this.displayNameForJid(message.participant ?? "", message.senderName) : chat?.name ?? this.displayNameForJid(jid, message.senderName),
                 media: message.media ? {
                     ...message.media,
                     url: `/api/media/${encodeURIComponent(jid)}/${encodeURIComponent(message.id)}`,
                 } : undefined,
-                status: message.status && message.status !== "null" ? message.status : undefined,
             }))
             .sort((a, b) => a.timestamp - b.timestamp);
+        if (allMessages.some((message) => message.media && !this.rawMessages.has(keySignature(message.key)) && !message.raw)) {
+            this.queueChatHistoryFetch(jid);
+        }
         const safeLimit = Math.max(1, Math.min(limit, 200));
         const end = Math.max(0, allMessages.length - (Math.max(1, page) - 1) * safeLimit);
         const start = Math.max(0, end - safeLimit);
@@ -419,26 +428,36 @@ class LocalWhatsAppService {
             throw new HttpError(404, "Media message was not found.");
         }
 
-        const raw = this.rawMessages.get(keySignature(message.key)) ?? message.raw as WAMessage | undefined;
+        let raw = this.rawMessages.get(keySignature(message.key)) ?? message.raw as WAMessage | undefined;
         if (!raw) {
+            this.queueChatHistoryFetch(jid);
             throw new HttpError(404, "Media payload is not available yet. Refresh WhatsApp history and try again.");
         }
 
         const socket = this.socket;
-        const buffer = await downloadMediaMessage(
-            raw,
-            "buffer",
-            {},
-            socket
-                ? {
-                    reuploadRequest: socket.updateMediaMessage,
-                    logger: socket.logger,
-                }
-                : undefined,
-        );
+        const context = socket
+            ? {
+                reuploadRequest: socket.updateMediaMessage,
+                logger: socket.logger,
+            }
+            : undefined;
+        let buffer: Buffer;
+        try {
+            buffer = Buffer.from(await downloadMediaMessage(raw, "buffer", {}, context));
+        } catch (error) {
+            if (!socket) {
+                throw error;
+            }
+
+            raw = await socket.updateMediaMessage(raw);
+            this.rawMessages.set(keySignature(message.key), raw);
+            message.raw = raw;
+            this.queuePersist();
+            buffer = Buffer.from(await downloadMediaMessage(raw, "buffer", {}, context));
+        }
 
         return {
-            buffer: Buffer.from(buffer),
+            buffer,
             mimetype: message.media.mimetype || "application/octet-stream",
             fileName: message.media.fileName || `${message.id}.${message.media.kind}`,
             kind: message.media.kind,
@@ -717,6 +736,9 @@ class LocalWhatsAppService {
         socket.ev.on("messages.update", (updates) => {
             this.handleMessageUpdates(updates);
         });
+        socket.ev.on("message-receipt.update", (updates) => {
+            this.handleMessageReceipts(updates);
+        });
         socket.ev.on("messages.delete", () => {
             this.publishMessagesChanged("messages.update");
         });
@@ -898,12 +920,70 @@ class LocalWhatsAppService {
             const list = this.messages.get(jid);
             const message = list?.find((item) => item.id === messageId);
             if (message && update.update.status !== undefined) {
-                message.status = String(update.update.status);
+                const status = update.update.status === null ? undefined : String(update.update.status);
+                const signature = keySignature({ id: messageId, remoteJid: jid, fromMe: Boolean(update.key.fromMe) });
+                const raw = this.rawMessages.get(signature);
+                if (raw) {
+                    raw.status = update.update.status;
+                    message.raw = raw;
+                }
+                message.status = status;
+                message.receipt = normalizeMessageReceipt(status, raw ?? message.raw, message.fromMe, jid);
             }
         }
 
         this.queuePersist();
         this.publishMessagesChanged("messages.update");
+    }
+
+    private handleMessageReceipts(updates: MessageUserReceiptUpdate[]): void {
+        for (const update of updates) {
+            const jid = update.key.remoteJid ? stripDeviceSuffix(update.key.remoteJid) : "";
+            const messageId = update.key.id ?? "";
+            if (!jid || !messageId) {
+                continue;
+            }
+
+            const list = this.messages.get(jid);
+            const message = list?.find((item) => item.id === messageId);
+            if (!message) {
+                continue;
+            }
+
+            const signature = keySignature({ id: messageId, remoteJid: jid, fromMe: Boolean(update.key.fromMe) });
+            const raw = this.rawMessages.get(signature);
+            if (raw) {
+                raw.userReceipt = this.mergeUserReceipts(raw.userReceipt, [update.receipt]);
+                message.raw = raw;
+            }
+
+            message.receipt = normalizeMessageReceipt(
+                message.status,
+                raw ?? { userReceipt: [update.receipt] },
+                message.fromMe,
+                jid,
+            );
+        }
+
+        this.queuePersist();
+        this.publishMessagesChanged("messages.update");
+    }
+
+    private mergeUserReceipts(existing: WAMessage["userReceipt"] | null | undefined, incoming: NonNullable<WAMessage["userReceipt"]>): NonNullable<WAMessage["userReceipt"]> {
+        const merged = new Map<string, NonNullable<WAMessage["userReceipt"]>[number]>();
+        for (const receipt of existing ?? []) {
+            const key = receipt.userJid ?? JSON.stringify(receipt);
+            merged.set(key, receipt);
+        }
+        for (const receipt of incoming) {
+            const key = receipt.userJid ?? JSON.stringify(receipt);
+            merged.set(key, {
+                ...merged.get(key),
+                ...receipt,
+            });
+        }
+
+        return [...merged.values()];
     }
 
     private saveRawMessage(raw: WAMessage | undefined, countUnread: boolean): NormalizedMessage | null {
@@ -1094,6 +1174,28 @@ class LocalWhatsAppService {
                 setTimeout(() => {
                     this.profilePictureRequests.delete(jid);
                 }, 10 * 60 * 1000);
+            });
+    }
+
+    private queueChatHistoryFetch(remoteJid: string): void {
+        const jid = stripDeviceSuffix(remoteJid);
+        if (!jid || this.historyRequests.has(jid) || !this.socket || this.snapshot.status !== "open") {
+            return;
+        }
+
+        const messages = [...(this.messages.get(jid) ?? [])].sort((a, b) => b.timestamp - a.timestamp);
+        const anchor = messages.find((message) => message.id && message.timestamp);
+        if (!anchor) {
+            return;
+        }
+
+        this.historyRequests.add(jid);
+        void this.socket.fetchMessageHistory(50, protoKeyFromNormalized(anchor.key), anchor.timestamp)
+            .catch(() => undefined)
+            .finally(() => {
+                setTimeout(() => {
+                    this.historyRequests.delete(jid);
+                }, 60_000);
             });
     }
 

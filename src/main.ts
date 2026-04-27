@@ -30,6 +30,7 @@ import type {
 const appRoot = document.getElementById("app");
 let toastTimer: number | undefined;
 let events: EventSource | null = null;
+let pendingThreadScrollBottom = false;
 const CLIENT_CACHE_KEY = "whatsappmail.clientCache.v1";
 
 if (!appRoot) {
@@ -71,6 +72,11 @@ interface ClientCache {
     localReadIds: string[];
     archivedIds: string[];
     savedAt: number;
+}
+
+interface LoadOptions {
+    showLoading?: boolean;
+    scrollToBottom?: boolean;
 }
 
 function icon(name: string, fill = false): string {
@@ -320,6 +326,7 @@ function renderChatPreview(chat: WhatsAppChatRow): string {
 
     return `
         <div class="message">
+            ${renderReadReceipt(chat.lastMessage, "row-preview")}
             <span class="subject">${chat.isGroup ? `<span class="group-chip">Group</span>` : ""}${escapeHtml(chat.subject)}</span>
             ${chat.snippet ? `<span class="snippet">${separator}${escapeHtml(chat.snippet)}</span>` : ""}
         </div>
@@ -458,11 +465,13 @@ function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string 
     const classes = ["thread-message", message.fromMe ? "from-me" : "", message.fromMe ? "reply-message" : ""]
         .filter(Boolean)
         .join(" ");
-    const sender = message.fromMe ? "me" : message.senderName || chat.name;
+    const sender = message.fromMe ? "me" : chat.isGroup ? message.senderName || "Someone" : chat.name;
+    const avatar = renderThreadAvatar(chat, message, sender);
+    const text = messageTextForThread(message);
 
     return `
         <article class="${classes}" data-message-id="${escapeHtml(message.id)}">
-            <div class="thread-avatar ${message.fromMe ? "face-avatar" : "empty-avatar"}">${message.fromMe ? "" : icon("person", true)}</div>
+            ${avatar}
             <div class="thread-message-main">
                 <header class="message-header">
                     <div>
@@ -470,7 +479,8 @@ function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string 
                         <div class="message-recipient">${message.fromMe ? `to ${escapeHtml(chat.name)}` : "to me"} ${message.participant && chat.isGroup ? `<span class="participant">via ${escapeHtml(message.participant)}</span>` : ""} ${icon("arrow_drop_down")}</div>
                     </div>
                     <div class="message-meta">
-                        <span>${escapeHtml(message.timeLabel)}${message.status ? ` - ${escapeHtml(message.status)}` : ""}</span>
+                        <span>${escapeHtml(message.timeLabel)}</span>
+                        ${renderReadReceipt(message, "thread")}
                         <button class="icon-button tiny-icon" aria-label="Star">${icon("star")}</button>
                         <button class="icon-button tiny-icon" aria-label="Reply" data-action="open-compose" data-compose-mode="reply">${icon("reply")}</button>
                         <button class="icon-button tiny-icon" aria-label="React" data-action="react-message" data-message-id="${escapeHtml(message.id)}">${icon("sentiment_satisfied")}</button>
@@ -478,15 +488,92 @@ function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string 
                 </header>
                 <div class="message-body">
                     ${renderMessageMedia(message)}
-                    ${renderMessageText(message.text)}
+                    ${renderMessageText(text)}
                 </div>
             </div>
         </article>
     `;
 }
 
+function renderReadReceipt(message: WhatsAppMessage | undefined, variant: "row-preview" | "thread"): string {
+    if (!message?.fromMe) {
+        return "";
+    }
+
+    const receipt = message.receipt ?? receiptFromStatus(message.status);
+    if (!receipt) {
+        return "";
+    }
+
+    const iconName = receipt.state === "pending"
+        ? "schedule"
+        : receipt.state === "error"
+          ? "error"
+          : receipt.state === "sent"
+            ? "done"
+            : "done_all";
+    const label = receipt.label;
+
+    return `
+        <span class="read-receipt ${variant} ${receipt.state}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
+            ${icon(iconName)}
+        </span>
+    `;
+}
+
+function receiptFromStatus(status: string | undefined): WhatsAppMessage["receipt"] | undefined {
+    const normalized = String(status ?? "").trim().toUpperCase();
+    const map: Record<string, NonNullable<WhatsAppMessage["receipt"]>> = {
+        "0": { state: "error", label: "Failed", code: "ERROR" },
+        ERROR: { state: "error", label: "Failed", code: "ERROR" },
+        "1": { state: "pending", label: "Pending", code: "PENDING" },
+        PENDING: { state: "pending", label: "Pending", code: "PENDING" },
+        "2": { state: "sent", label: "Sent", code: "SERVER_ACK" },
+        SERVER_ACK: { state: "sent", label: "Sent", code: "SERVER_ACK" },
+        "3": { state: "delivered", label: "Delivered", code: "DELIVERY_ACK" },
+        DELIVERY_ACK: { state: "delivered", label: "Delivered", code: "DELIVERY_ACK" },
+        "4": { state: "read", label: "Read", code: "READ" },
+        READ: { state: "read", label: "Read", code: "READ" },
+        "5": { state: "played", label: "Played", code: "PLAYED" },
+        PLAYED: { state: "played", label: "Played", code: "PLAYED" },
+    };
+
+    return map[normalized];
+}
+
+function renderThreadAvatar(chat: WhatsAppChatRow, message: WhatsAppMessage, sender: string): string {
+    const url = message.fromMe ? state.connection?.profilePictureUrl : chat.isGroup ? "" : chat.profilePicUrl;
+    if (url) {
+        return `<div class="thread-avatar photo-avatar" style="background-image:url('${escapeHtml(url)}')"></div>`;
+    }
+
+    if (message.fromMe) {
+        return `<div class="thread-avatar face-avatar"></div>`;
+    }
+
+    const initial = (sender.trim()[0] || "?").toUpperCase();
+    return `<div class="thread-avatar empty-avatar"><span>${escapeHtml(initial)}</span></div>`;
+}
+
+function messageTextForThread(message: WhatsAppMessage): string {
+    if (!message.media) {
+        return message.text;
+    }
+
+    if (message.media.caption) {
+        return message.media.caption;
+    }
+
+    const generic = new Set(["Image message", "Video message", "Audio message", "Voice message", "Document message", "Sticker"]);
+    return generic.has(message.text) ? "" : message.text;
+}
+
 function renderMessageText(text: string): string {
-    return escapeHtml(text || "").split(/\n+/).map((line) => `<p>${line || "&nbsp;"}</p>`).join("");
+    if (!text) {
+        return "";
+    }
+
+    return escapeHtml(text).split(/\n+/).map((line) => `<p>${line || "&nbsp;"}</p>`).join("");
 }
 
 function renderMessageMedia(message: WhatsAppMessage): string {
@@ -496,18 +583,22 @@ function renderMessageMedia(message: WhatsAppMessage): string {
 
     const caption = message.media.caption || message.text;
     if (message.media.kind === "image" && message.media.url) {
-        return `<figure class="media-preview"><img src="${escapeHtml(message.media.url)}" alt="${escapeHtml(caption || "Image message")}"></figure>`;
+        return `<figure class="media-preview" data-media-fallback="${escapeHtml(message.media.fileName || "Image unavailable")}"><img class="media-image" src="${escapeHtml(message.media.url)}" alt="${escapeHtml(caption || "Image message")}"></figure>`;
     }
 
     if (message.media.kind === "video" && message.media.url) {
         return `<figure class="media-preview"><video src="${escapeHtml(message.media.url)}" controls></video></figure>`;
     }
 
+    if (message.media.kind === "audio" && message.media.url) {
+        return `<figure class="media-preview audio-preview"><audio src="${escapeHtml(message.media.url)}" controls></audio></figure>`;
+    }
+
     return `
-        <div class="media-attachment">
+        <${message.media.url ? `a href="${escapeHtml(message.media.url)}" target="_blank" rel="noreferrer"` : "div"} class="media-attachment">
             ${icon(mediaIcon(message.media.kind))}
             <span>${escapeHtml(message.media.fileName || message.media.kind)}</span>
-        </div>
+        </${message.media.url ? "a" : "div"}>
     `;
 }
 
@@ -764,6 +855,21 @@ function renderShell(): string {
 
 function render(): void {
     app.innerHTML = renderShell();
+    afterRender();
+}
+
+function afterRender(): void {
+    if (!pendingThreadScrollBottom) {
+        return;
+    }
+
+    pendingThreadScrollBottom = false;
+    window.requestAnimationFrame(() => {
+        const threadContent = app.querySelector<HTMLElement>(".thread-content");
+        if (threadContent) {
+            threadContent.scrollTop = threadContent.scrollHeight;
+        }
+    });
 }
 
 function showToast(message: string): void {
@@ -851,9 +957,13 @@ async function refreshHealthAndConnection(): Promise<void> {
     render();
 }
 
-async function loadChats(): Promise<void> {
-    state.loadingChats = true;
-    render();
+async function loadChats(options: LoadOptions = {}): Promise<void> {
+    const showLoading = options.showLoading ?? state.chats.length === 0;
+    if (showLoading) {
+        state.loadingChats = true;
+        render();
+    }
+
     try {
         const response = await getChats({ limit: 100 });
         if (response.chats.length || state.chats.length === 0) {
@@ -868,25 +978,42 @@ async function loadChats(): Promise<void> {
     } catch (error) {
         state.error = error instanceof Error ? error.message : "Could not load WhatsApp chats.";
     } finally {
-        state.loadingChats = false;
+        if (showLoading) {
+            state.loadingChats = false;
+        }
         render();
     }
 }
 
-async function loadMessages(remoteJid: string): Promise<void> {
-    state.loadingMessages = true;
-    render();
+async function loadMessages(remoteJid: string, options: LoadOptions = {}): Promise<void> {
+    const showLoading = options.showLoading ?? !(state.messagesByChat[remoteJid]?.length);
+    const scrollToBottom = options.scrollToBottom ?? remoteJid === state.openChatId;
+    if (showLoading) {
+        state.loadingMessages = true;
+    }
+    if (scrollToBottom && remoteJid === state.openChatId) {
+        pendingThreadScrollBottom = true;
+    }
+    if (showLoading) {
+        render();
+    }
+
     try {
-        const response = await getMessages(remoteJid, 1, 80);
+        const response = await getMessages(remoteJid, 1, 200);
         state.messagesByChat[remoteJid] = response.messages;
         if (response.messages.length) {
             saveClientCache();
         }
         state.error = null;
+        if (scrollToBottom && remoteJid === state.openChatId) {
+            pendingThreadScrollBottom = true;
+        }
     } catch (error) {
         state.error = error instanceof Error ? error.message : "Could not load WhatsApp messages.";
     } finally {
-        state.loadingMessages = false;
+        if (showLoading) {
+            state.loadingMessages = false;
+        }
         render();
     }
 }
@@ -908,9 +1035,25 @@ function handleServerEvent(payload: ServerEventPayload): void {
     }
 
     if (payload.type === "messages.upsert" || payload.type === "messages.update") {
-        void loadChats();
-        if (state.openChatId) {
-            void loadMessages(state.openChatId);
+        const data = readEventData(payload.data);
+        const record = typeof data === "object" && data ? data as Record<string, unknown> : {};
+        const localStateOnlyUpdate = payload.type === "messages.update"
+            && typeof record.remoteJid === "string"
+            && record.changed !== true
+            && record.chats !== true
+            && record.profilePicUrl !== true;
+        if (localStateOnlyUpdate) {
+            return;
+        }
+
+        const shouldReloadOpenMessages = payload.type === "messages.upsert" || record.changed === true;
+
+        void loadChats({ showLoading: false });
+        if (state.openChatId && shouldReloadOpenMessages) {
+            void loadMessages(state.openChatId, {
+                showLoading: false,
+                scrollToBottom: payload.type === "messages.upsert",
+            });
         }
     }
 }
@@ -967,10 +1110,14 @@ async function openChat(remoteJid: string): Promise<void> {
     state.selectedIds.clear();
     state.localReadIds.add(remoteJid);
     state.menu = null;
+    pendingThreadScrollBottom = true;
     history.replaceState(null, "", "#open-chat");
     render();
     await Promise.allSettled([
-        loadMessages(remoteJid),
+        loadMessages(remoteJid, {
+            showLoading: !(state.messagesByChat[remoteJid]?.length),
+            scrollToBottom: true,
+        }),
         markChatRead(remoteJid, currentChat()?.lastMessage?.key),
     ]);
 }
@@ -1088,6 +1235,11 @@ function makeOptimisticMessage(remoteJid: string, text: string): WhatsAppMessage
         timestamp,
         timeLabel: "now",
         status: "PENDING",
+        receipt: {
+            state: "pending",
+            label: "Pending",
+            code: "PENDING",
+        },
         key: {
             id: `temp-${timestamp}`,
             remoteJid,
@@ -1118,7 +1270,9 @@ function upsertChatFromMessage(message: WhatsAppMessage): void {
     const existing = state.chats.find((chat) => chat.remoteJid === message.remoteJid);
     if (existing) {
         existing.lastMessage = message;
-        existing.subject = message.fromMe ? `You: ${message.type}` : message.type;
+        existing.subject = message.fromMe
+            ? message.type === "Text message" ? "You:" : `You: ${message.type}`
+            : message.type === "Text message" ? message.text : message.type;
         existing.snippet = message.text;
         existing.timestamp = message.timestamp;
         existing.timeLabel = message.timeLabel;
@@ -1130,7 +1284,9 @@ function upsertChatFromMessage(message: WhatsAppMessage): void {
         id: message.remoteJid,
         remoteJid: message.remoteJid,
         name: message.remoteJid,
-        subject: message.fromMe ? `You: ${message.type}` : message.type,
+        subject: message.fromMe
+            ? message.type === "Text message" ? "You:" : `You: ${message.type}`
+            : message.type === "Text message" ? message.text : message.type,
         snippet: message.text,
         timestamp: message.timestamp,
         timeLabel: message.timeLabel,
@@ -1316,7 +1472,7 @@ async function handleAction(target: HTMLElement): Promise<void> {
         }
         case "refresh":
             await refreshHealthAndConnection();
-            await loadChats();
+            await loadChats({ showLoading: true });
             showToast("Inbox refreshed");
             return;
         case "archive-selected":
@@ -1438,6 +1594,18 @@ app.addEventListener("error", (event) => {
     const target = event.target;
     if (target instanceof HTMLImageElement && target.classList.contains("profile-avatar-img")) {
         target.remove();
+    }
+
+    if (target instanceof HTMLImageElement && target.classList.contains("media-image")) {
+        const figure = target.closest<HTMLElement>(".media-preview");
+        if (figure) {
+            figure.innerHTML = `
+                <div class="media-unavailable">
+                    ${icon("image_not_supported")}
+                    <span>${escapeHtml(figure.dataset.mediaFallback || "Image unavailable")}</span>
+                </div>
+            `;
+        }
     }
 }, true);
 

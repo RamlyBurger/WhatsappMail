@@ -23,6 +23,17 @@ export interface WhatsAppMediaPreview {
     seconds?: number;
 }
 
+export type WhatsAppReceiptState = "error" | "pending" | "sent" | "delivered" | "read" | "played";
+
+export interface WhatsAppReadReceipt {
+    state: WhatsAppReceiptState;
+    label: string;
+    code?: string;
+    deliveredCount?: number;
+    readCount?: number;
+    playedCount?: number;
+}
+
 export interface NormalizedMessage {
     id: string;
     remoteJid: string;
@@ -34,6 +45,7 @@ export interface NormalizedMessage {
     timestamp: number;
     timeLabel: string;
     status?: string;
+    receipt?: WhatsAppReadReceipt;
     key: WhatsAppMessageKey;
     media?: WhatsAppMediaPreview;
     raw?: unknown;
@@ -185,6 +197,109 @@ export function timestampSeconds(value: WAMessage["messageTimestamp"] | Chat["co
     return numeric > 10_000_000_000 ? Math.floor(numeric / 1000) : numeric;
 }
 
+function receiptStateFromStatus(value: unknown): WhatsAppReadReceipt | undefined {
+    const normalized = String(value ?? "").trim().toUpperCase();
+    if (!normalized || normalized === "NULL" || normalized === "UNDEFINED") {
+        return undefined;
+    }
+
+    const statusMap: Record<string, WhatsAppReadReceipt> = {
+        "0": { state: "error", label: "Failed", code: "ERROR" },
+        ERROR: { state: "error", label: "Failed", code: "ERROR" },
+        "1": { state: "pending", label: "Pending", code: "PENDING" },
+        PENDING: { state: "pending", label: "Pending", code: "PENDING" },
+        "2": { state: "sent", label: "Sent", code: "SERVER_ACK" },
+        SERVER_ACK: { state: "sent", label: "Sent", code: "SERVER_ACK" },
+        "3": { state: "delivered", label: "Delivered", code: "DELIVERY_ACK" },
+        DELIVERY_ACK: { state: "delivered", label: "Delivered", code: "DELIVERY_ACK" },
+        "4": { state: "read", label: "Read", code: "READ" },
+        READ: { state: "read", label: "Read", code: "READ" },
+        "5": { state: "played", label: "Played", code: "PLAYED" },
+        PLAYED: { state: "played", label: "Played", code: "PLAYED" },
+    };
+
+    return statusMap[normalized];
+}
+
+function receiptStatsFromRaw(raw: unknown): Pick<WhatsAppReadReceipt, "deliveredCount" | "readCount" | "playedCount"> {
+    const userReceipt = asRecord(raw).userReceipt;
+    if (!Array.isArray(userReceipt)) {
+        return {};
+    }
+
+    let deliveredCount = 0;
+    let readCount = 0;
+    let playedCount = 0;
+    for (const receipt of userReceipt) {
+        const record = asRecord(receipt);
+        if (asNumber(record.receiptTimestamp) > 0) {
+            deliveredCount += 1;
+        }
+        if (asNumber(record.readTimestamp) > 0) {
+            readCount += 1;
+        }
+        if (asNumber(record.playedTimestamp) > 0) {
+            playedCount += 1;
+        }
+    }
+
+    return {
+        ...(deliveredCount ? { deliveredCount } : {}),
+        ...(readCount ? { readCount } : {}),
+        ...(playedCount ? { playedCount } : {}),
+    };
+}
+
+function receiptDetail(receipt: WhatsAppReadReceipt): string {
+    const details = [
+        receipt.deliveredCount ? `delivered to ${receipt.deliveredCount}` : "",
+        receipt.readCount ? `read by ${receipt.readCount}` : "",
+        receipt.playedCount ? `played by ${receipt.playedCount}` : "",
+    ].filter(Boolean);
+
+    return details.length ? `${receipt.label} (${details.join(", ")})` : receipt.label;
+}
+
+export function normalizeMessageReceipt(status: unknown, raw: unknown, fromMe: boolean, remoteJid: string): WhatsAppReadReceipt | undefined {
+    if (!fromMe) {
+        return undefined;
+    }
+
+    const base = receiptStateFromStatus(status);
+    const stats = receiptStatsFromRaw(raw);
+    const isGroup = stripDeviceSuffix(remoteJid).endsWith("@g.us");
+    const receipt = { ...(base ?? { state: "sent" as const, label: "Sent", code: "SERVER_ACK" }), ...stats };
+
+    if (!isGroup) {
+        if (receipt.playedCount) {
+            receipt.state = "played";
+            receipt.label = "Played";
+            receipt.code = "PLAYED";
+        } else if (receipt.readCount) {
+            receipt.state = "read";
+            receipt.label = "Read";
+            receipt.code = "READ";
+        } else if (receipt.deliveredCount && receipt.state !== "read" && receipt.state !== "played") {
+            receipt.state = "delivered";
+            receipt.label = "Delivered";
+            receipt.code = "DELIVERY_ACK";
+        }
+    }
+
+    return {
+        ...receipt,
+        label: receiptDetail(receipt),
+    };
+}
+
+export function withMessageReceipt<T extends NormalizedMessage>(message: T): T {
+    return {
+        ...message,
+        status: message.status && message.status !== "null" ? message.status : undefined,
+        receipt: message.receipt ?? normalizeMessageReceipt(message.status, message.raw, message.fromMe, message.remoteJid),
+    };
+}
+
 export function contactDisplayName(contact: Partial<Contact> | undefined, fallbackJid: string): string {
     const record = asRecord(contact);
     return asString(record.name || record.verifiedName || record.notify || record.pushName, jidToDisplayName(fallbackJid));
@@ -333,6 +448,7 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
     const fromMe = Boolean(raw.key.fromMe);
     const senderJid = fromMe ? ownerJid : participant ?? remoteJid;
     const senderName = fromMe ? "me" : raw.pushName ?? jidToDisplayName(senderJid);
+    const status = raw.status === undefined || raw.status === null ? undefined : String(raw.status);
 
     return {
         id,
@@ -344,7 +460,8 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
         text: extracted.text,
         timestamp,
         timeLabel: formatTimeLabel(timestamp),
-        status: raw.status === undefined ? undefined : String(raw.status),
+        status,
+        receipt: normalizeMessageReceipt(status, raw, fromMe, remoteJid),
         key: {
             id,
             remoteJid,
@@ -360,7 +477,7 @@ export function normalizeLocalChat(chat: LocalChatProjection): NormalizedChat {
     const remoteJid = stripDeviceSuffix(chat.remoteJid);
     const isGroup = remoteJid.endsWith("@g.us");
     const name = chat.name || jidToDisplayName(remoteJid);
-    const lastMessage = chat.lastMessage;
+    const lastMessage = chat.lastMessage ? withMessageReceipt(chat.lastMessage) : undefined;
     const messageTimestamp = lastMessage?.timestamp ?? 0;
     const metadataTimestamp = chat.metadataTimestamp ?? chat.timestamp ?? 0;
     const timestamp = lastMessage ? messageTimestamp : metadataTimestamp;

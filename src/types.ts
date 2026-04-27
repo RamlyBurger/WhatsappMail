@@ -20,6 +20,17 @@ export interface WhatsAppMediaPreview {
     seconds?: number;
 }
 
+export type WhatsAppReceiptState = "error" | "pending" | "sent" | "delivered" | "read" | "played";
+
+export interface WhatsAppReadReceipt {
+    state: WhatsAppReceiptState;
+    label: string;
+    code?: string;
+    deliveredCount?: number;
+    readCount?: number;
+    playedCount?: number;
+}
+
 export interface WhatsAppMessage {
     id: string;
     remoteJid: string;
@@ -31,6 +42,7 @@ export interface WhatsAppMessage {
     timestamp: number;
     timeLabel: string;
     status?: string;
+    receipt?: WhatsAppReadReceipt;
     key: WhatsAppMessageKey;
     media?: WhatsAppMediaPreview;
 }
