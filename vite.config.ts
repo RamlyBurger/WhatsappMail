@@ -9,7 +9,7 @@ export default defineConfig({
   server: {
     open: true,
     watch: {
-      ignored: ['**/template/**', '**/output/**', '**/dist/**'],
+      ignored: ['**/output/**', '**/dist/**'],
     },
     proxy: {
       '/api': 'http://127.0.0.1:8787',
