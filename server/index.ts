@@ -298,8 +298,9 @@ class LocalWhatsAppService {
                     continue;
                 }
 
-                const jid = stripDeviceSuffix(chat.remoteJid);
-                const fallbackPinned = fallbackPinnedJids.has(jid);
+                const sourceJid = stripDeviceSuffix(chat.remoteJid);
+                const jid = this.canonicalChatJid(sourceJid);
+                const fallbackPinned = fallbackPinnedJids.has(sourceJid) || fallbackPinnedJids.has(jid);
                 const loadedChat = {
                     ...chat,
                     remoteJid: jid,
@@ -309,12 +310,18 @@ class LocalWhatsAppService {
                     pinnedTimestamp: chat.pinnedTimestamp ?? (fallbackPinned ? Number.MAX_SAFE_INTEGER - chatIndex : undefined),
                     pinnedRank: chat.pinnedRank ?? (fallbackPinned ? chatIndex : undefined),
                 };
+                this.removeReactionActivity(loadedChat);
                 this.applyChatName(loadedChat, this.displayNameForJid(jid, loadedChat.name), Boolean(this.savedContactNameForJid(jid)));
-                this.chats.set(jid, loadedChat);
+                const existing = this.chats.get(jid);
+                if (existing) {
+                    this.mergeChatInto(existing, loadedChat);
+                } else {
+                    this.chats.set(jid, loadedChat);
+                }
             }
 
             for (const [jid, list] of cache.messages ?? []) {
-                const normalizedJid = stripDeviceSuffix(jid);
+                const normalizedJid = this.canonicalChatJid(jid);
                 if (!normalizedJid || !Array.isArray(list)) {
                     continue;
                 }
@@ -322,6 +329,10 @@ class LocalWhatsAppService {
                 const unique = new Map<string, NormalizedMessage>();
                 for (const message of list) {
                     if (!message.id) {
+                        continue;
+                    }
+
+                    if (message.type === "Reaction") {
                         continue;
                     }
 
@@ -356,7 +367,18 @@ class LocalWhatsAppService {
                     unique.set(message.id, cachedMessage);
                 }
 
-                const messages = [...unique.values()].sort((a, b) => a.timestamp - b.timestamp);
+                const mergedMessages = new Map<string, NormalizedMessage>();
+                for (const existingMessage of this.messages.get(normalizedJid) ?? []) {
+                    if (existingMessage.type !== "Reaction") {
+                        mergedMessages.set(existingMessage.id, existingMessage);
+                    }
+                }
+                for (const cachedMessage of unique.values()) {
+                    const existingMessage = mergedMessages.get(cachedMessage.id);
+                    mergedMessages.set(cachedMessage.id, existingMessage ? this.mergeMessage(existingMessage, cachedMessage) : cachedMessage);
+                }
+
+                const messages = [...mergedMessages.values()].sort((a, b) => a.timestamp - b.timestamp);
                 this.messages.set(normalizedJid, messages);
                 for (const message of messages) {
                     if (message.raw) {
@@ -365,6 +387,10 @@ class LocalWhatsAppService {
                 }
 
                 this.updateChatActivity(normalizedJid);
+            }
+
+            for (const chat of [...this.chats.values()]) {
+                this.mergeChatAliasesForJid(chat.remoteJid);
             }
         } catch (error) {
             console.warn("Could not load local WhatsApp cache:", error instanceof Error ? error.message : error);
@@ -412,6 +438,10 @@ class LocalWhatsAppService {
 
     private persistCache(): void {
         try {
+            for (const chat of [...this.chats.values()]) {
+                this.mergeChatAliasesForJid(chat.remoteJid);
+            }
+
             mkdirSync(this.config.dataDir, { recursive: true });
 
             const stripMessageRaw = (message: NormalizedMessage): NormalizedMessage => {
@@ -437,7 +467,7 @@ class LocalWhatsAppService {
                 chats: [...this.chats.values()].map(stripChatRaw),
                 messages: [...this.messages.entries()].map(([jid, messages]) => [
                     jid,
-                    messages.slice(-500).map(stripMessageRaw),
+                    messages.filter((message) => message.type !== "Reaction").slice(-500).map(stripMessageRaw),
                 ]),
             };
 
@@ -467,6 +497,10 @@ class LocalWhatsAppService {
         const offset = Math.max(0, options.offset ?? 0);
         const limit = Math.max(1, Math.min(options.limit ?? 100, 200));
         const folder = options.folder ?? "inbox";
+
+        for (const chat of [...this.chats.values()]) {
+            this.mergeChatAliasesForJid(chat.remoteJid);
+        }
 
         let sourceChats = [...this.chats.values()]
             .filter((chat) => folder === "archive" ? chat.archived : !chat.archived);
@@ -505,9 +539,11 @@ class LocalWhatsAppService {
     }
 
     public listMessages(remoteJid: string, page: number, limit: number): { messages: NormalizedMessage[]; total: number } {
-        const jid = normalizeInputJid(remoteJid);
+        const jid = this.canonicalChatJid(normalizeInputJid(remoteJid));
+        this.mergeChatAliasesForJid(jid);
         const chat = this.chats.get(jid);
         const allMessages: NormalizedMessage[] = [...(this.messages.get(jid) ?? [])]
+            .filter((message) => message.type !== "Reaction")
             .map((message) => withMessageReceipt({
                 ...message,
                 senderName: message.fromMe ? "me" : jid.endsWith("@g.us") ? this.groupDisplayNameForJid(message.participant ?? "", message.senderName) : chat?.name ?? this.displayNameForJid(jid, message.senderName),
@@ -546,7 +582,7 @@ class LocalWhatsAppService {
     }
 
     public async downloadMedia(remoteJid: string, messageId: string): Promise<DownloadedMedia> {
-        const jid = normalizeInputJid(remoteJid);
+        const jid = this.canonicalChatJid(normalizeInputJid(remoteJid));
         const message = this.messages.get(jid)?.find((item) => item.id === messageId);
         if (!message?.media) {
             throw new HttpError(404, "Media message was not found.");
@@ -699,7 +735,7 @@ class LocalWhatsAppService {
 
     public async sendText(remoteJid: string, text: string): Promise<NormalizedMessage> {
         const socket = this.requireOpenSocket();
-        const jid = normalizeInputJid(remoteJid);
+        const jid = this.canonicalChatJid(normalizeInputJid(remoteJid));
 
         await socket.sendPresenceUpdate("composing", jid);
         const result = await socket.sendMessage(jid, { text });
@@ -723,7 +759,7 @@ class LocalWhatsAppService {
         caption?: string;
     }): Promise<NormalizedMessage> {
         const socket = this.requireOpenSocket();
-        const jid = normalizeInputJid(input.remoteJid);
+        const jid = this.canonicalChatJid(normalizeInputJid(input.remoteJid));
         const content =
             input.mediaKind === "image"
                 ? { image: input.buffer, caption: input.caption || undefined, mimetype: input.mimetype }
@@ -772,7 +808,7 @@ class LocalWhatsAppService {
     }
 
     public async markRead(remoteJid: string, key?: WhatsAppMessageKey): Promise<void> {
-        const jid = normalizeInputJid(remoteJid);
+        const jid = this.canonicalChatJid(normalizeInputJid(remoteJid));
         const chat = this.ensureChat(jid);
         chat.unreadCount = 0;
 
@@ -785,7 +821,7 @@ class LocalWhatsAppService {
     }
 
     public async markUnread(remoteJid: string): Promise<void> {
-        const jid = normalizeInputJid(remoteJid);
+        const jid = this.canonicalChatJid(normalizeInputJid(remoteJid));
         const chat = this.ensureChat(jid);
         chat.unreadCount = Math.max(chat.unreadCount ?? 0, 1);
         this.queuePersist();
@@ -793,7 +829,7 @@ class LocalWhatsAppService {
     }
 
     public async archiveChat(remoteJid: string, archive: boolean): Promise<void> {
-        const jid = normalizeInputJid(remoteJid);
+        const jid = this.canonicalChatJid(normalizeInputJid(remoteJid));
         const chat = this.ensureChat(jid);
         chat.archived = archive;
 
@@ -989,7 +1025,7 @@ class LocalWhatsAppService {
             }
 
             const aliases = this.contactAliases(contact);
-            const primaryJid = aliases.find((alias) => alias.endsWith("@lid")) ?? aliases[0];
+            const primaryJid = aliases.find((alias) => alias.endsWith("@s.whatsapp.net")) ?? aliases[0];
             const existing = aliases
                 .map((alias) => this.contacts.get(alias))
                 .filter((value): value is Contact => Boolean(value))
@@ -1000,7 +1036,8 @@ class LocalWhatsAppService {
                 this.contacts.set(alias, merged);
             }
 
-            const chat = this.contactAliases(merged).map((alias) => this.chats.get(alias)).find(Boolean);
+            const chat = this.mergeChatAliasesForJid(primaryJid)
+                ?? this.contactAliases(merged).map((alias) => this.chats.get(alias)).find(Boolean);
             if (chat) {
                 const savedName = this.savedContactNameForJid(chat.remoteJid);
                 this.applyChatName(chat, savedName ?? contactDisplayName(merged, chat.remoteJid), Boolean(savedName));
@@ -1022,7 +1059,8 @@ class LocalWhatsAppService {
             }
 
             this.coldHistoryRetryStarted = false;
-            const jid = stripDeviceSuffix(chat.id);
+            const sourceJid = stripDeviceSuffix(chat.id);
+            const jid = this.canonicalChatJid(sourceJid);
             const existing = this.ensureChat(jid);
             const chatRecord = chat as Partial<Chat> & {
                 accountLid?: string;
@@ -1054,6 +1092,7 @@ class LocalWhatsAppService {
                 id: jid,
             };
             this.queueProfilePictureFetch(jid);
+            this.mergeChatAliasesForJid(jid, { preserveTargetPin: true });
 
             for (const embeddedMessage of this.embeddedChatMessages(chatRecord)) {
                 this.saveRawMessage(embeddedMessage, false);
@@ -1392,7 +1431,7 @@ class LocalWhatsAppService {
 
     private handleMessageUpdates(updates: WAMessageUpdate[]): void {
         for (const update of updates) {
-            const jid = update.key.remoteJid ? stripDeviceSuffix(update.key.remoteJid) : "";
+            const jid = update.key.remoteJid ? this.canonicalChatJid(update.key.remoteJid) : "";
             const messageId = update.key.id ?? "";
             if (!jid || !messageId) {
                 continue;
@@ -1456,11 +1495,11 @@ class LocalWhatsAppService {
     private handleMessagesDelete(update: BaileysEventMap["messages.delete"]): void {
         const keys = "keys" in update
             ? update.keys
-            : (this.messages.get(stripDeviceSuffix(update.jid)) ?? []).map((message) => message.key);
+            : (this.messages.get(this.canonicalChatJid(update.jid)) ?? []).map((message) => message.key);
 
         let changed = false;
         for (const key of keys) {
-            const jid = key.remoteJid ? stripDeviceSuffix(key.remoteJid) : "";
+            const jid = key.remoteJid ? this.canonicalChatJid(key.remoteJid) : "";
             const messageId = key.id ?? "";
             if (!jid || !messageId) {
                 continue;
@@ -1493,7 +1532,7 @@ class LocalWhatsAppService {
 
     private handleMessageReceipts(updates: MessageUserReceiptUpdate[]): void {
         for (const update of updates) {
-            const jid = update.key.remoteJid ? stripDeviceSuffix(update.key.remoteJid) : "";
+            const jid = update.key.remoteJid ? this.canonicalChatJid(update.key.remoteJid) : "";
             const messageId = update.key.id ?? "";
             if (!jid || !messageId) {
                 continue;
@@ -1541,7 +1580,7 @@ class LocalWhatsAppService {
     private handleCallUpdates(updates: BaileysEventMap["call"]): void {
         let changed = false;
         for (const update of updates) {
-            const remoteJid = stripDeviceSuffix(update.chatId || update.groupJid || update.from || "");
+            const remoteJid = this.canonicalChatJid(update.chatId || update.groupJid || update.from || "");
             if (!remoteJid || remoteJid === "status@broadcast") {
                 continue;
             }
@@ -1589,15 +1628,16 @@ class LocalWhatsAppService {
             return false;
         }
 
-        return this.applyReactionToMessage(reactionMessage.key, {
+        this.applyReactionToMessage(reactionMessage.key, {
             key: raw.key,
             text: reactionMessage.text ?? "",
             senderTimestampMs: timestampSeconds(raw.messageTimestamp) * 1000,
         });
+        return true;
     }
 
     private applyReactionToMessage(targetKey: proto.IMessageKey | WhatsAppMessageKey | null | undefined, reaction: proto.IReaction): boolean {
-        const jid = targetKey?.remoteJid ? stripDeviceSuffix(targetKey.remoteJid) : "";
+        const jid = targetKey?.remoteJid ? this.canonicalChatJid(targetKey.remoteJid) : "";
         const messageId = targetKey?.id ?? "";
         if (!jid || !messageId) {
             return false;
@@ -1784,7 +1824,7 @@ class LocalWhatsAppService {
     }
 
     private saveSyntheticMessage(message: NormalizedMessage): boolean {
-        const jid = stripDeviceSuffix(message.remoteJid);
+        const jid = this.canonicalChatJid(message.remoteJid);
         if (!jid || !message.id) {
             return false;
         }
@@ -1821,13 +1861,18 @@ class LocalWhatsAppService {
     }
 
     private updateChatActivity(remoteJid: string): void {
-        const jid = stripDeviceSuffix(remoteJid);
+        const jid = this.canonicalChatJid(remoteJid);
         if (!jid) {
             return;
         }
 
         const chat = this.ensureChat(jid);
-        const current = [...(this.messages.get(jid) ?? [])].sort((a, b) => a.timestamp - b.timestamp);
+        const current = [...(this.messages.get(jid) ?? [])]
+            .filter((message) => message.type !== "Reaction")
+            .sort((a, b) => a.timestamp - b.timestamp);
+        if (current.length !== (this.messages.get(jid) ?? []).length) {
+            this.messages.set(jid, current);
+        }
         const latestActivity = current[current.length - 1];
         const latestMessage = [...current].reverse().find((message) => !message.activityOnly);
 
@@ -1875,6 +1920,19 @@ class LocalWhatsAppService {
             return null;
         }
 
+        if (normalized.type === "Reaction") {
+            return null;
+        }
+
+        const canonicalRemoteJid = this.canonicalChatJid(normalized.remoteJid);
+        if (canonicalRemoteJid !== normalized.remoteJid) {
+            normalized.remoteJid = canonicalRemoteJid;
+            normalized.key = {
+                ...normalized.key,
+                remoteJid: canonicalRemoteJid,
+            };
+        }
+
         if (!normalized.fromMe) {
             const senderJid = normalized.participant ?? normalized.remoteJid;
             normalized.senderName = normalized.remoteJid.endsWith("@g.us")
@@ -1916,7 +1974,7 @@ class LocalWhatsAppService {
     }
 
     private ensureChat(remoteJid: string): LocalChatProjection {
-        const jid = stripDeviceSuffix(remoteJid);
+        const jid = this.canonicalChatJid(remoteJid);
         const existing = this.chats.get(jid);
         if (existing) {
             return existing;
@@ -1932,6 +1990,193 @@ class LocalWhatsAppService {
         };
         this.chats.set(jid, chat);
         return chat;
+    }
+
+    private canonicalChatJid(remoteJid: string | null | undefined): string {
+        const jid = remoteJid ? stripDeviceSuffix(remoteJid) : "";
+        if (!jid || jid === "status@broadcast" || jid.endsWith("@g.us")) {
+            return jid;
+        }
+
+        const contact = this.contactForJid(jid);
+        if (!contact) {
+            return jid;
+        }
+
+        const phoneAlias = this.contactAliases(contact).find((alias) => alias.endsWith("@s.whatsapp.net"));
+        return phoneAlias ?? jid;
+    }
+
+    private chatAliasesForJid(remoteJid: string): string[] {
+        const jid = stripDeviceSuffix(remoteJid);
+        const contact = this.contactForJid(jid);
+        return [...new Set([jid, ...(contact ? this.contactAliases(contact) : [])].filter(Boolean))];
+    }
+
+    private removeReactionActivity(chat: LocalChatProjection): void {
+        let removed = false;
+        if (chat.lastMessage?.type === "Reaction") {
+            chat.lastMessage = undefined;
+            removed = true;
+        }
+        if (chat.lastActivity?.type === "Reaction") {
+            chat.lastActivity = undefined;
+            removed = true;
+        }
+
+        if (removed) {
+            const timestamp = Math.max(chat.lastActivity?.timestamp ?? 0, chat.lastMessage?.timestamp ?? 0);
+            chat.timestamp = timestamp;
+            chat.metadataTimestamp = timestamp;
+        }
+    }
+
+    private mergeChatAliasesForJid(remoteJid: string, options: { preserveTargetPin?: boolean } = {}): LocalChatProjection | undefined {
+        const canonicalJid = this.canonicalChatJid(remoteJid);
+        if (!canonicalJid) {
+            return undefined;
+        }
+
+        let target = this.chats.get(canonicalJid);
+        for (const alias of this.chatAliasesForJid(canonicalJid)) {
+            if (alias === canonicalJid) {
+                continue;
+            }
+
+            const source = this.chats.get(alias);
+            if (!source) {
+                this.moveMessagesToChat(alias, canonicalJid);
+                continue;
+            }
+
+            if (!target) {
+                source.remoteJid = canonicalJid;
+                this.chats.delete(alias);
+                this.chats.set(canonicalJid, source);
+                target = source;
+            } else {
+                this.mergeChatInto(target, source, options);
+                this.chats.delete(alias);
+            }
+
+            this.moveMessagesToChat(alias, canonicalJid);
+        }
+
+        if (target) {
+            target.remoteJid = canonicalJid;
+            this.updateChatActivity(canonicalJid);
+        }
+
+        return target;
+    }
+
+    private mergeChatInto(target: LocalChatProjection, source: LocalChatProjection, options: { preserveTargetPin?: boolean } = {}): void {
+        this.removeReactionActivity(source);
+        this.removeReactionActivity(target);
+
+        const savedName = this.savedContactNameForJid(target.remoteJid);
+        this.applyChatName(target, savedName ?? source.name, Boolean(savedName));
+        target.unreadCount = Math.max(target.unreadCount ?? 0, source.unreadCount ?? 0);
+        const sourceContentTimestamp = Math.max(source.lastActivity?.timestamp ?? 0, source.lastMessage?.timestamp ?? 0);
+        target.timestamp = Math.max(target.timestamp ?? 0, sourceContentTimestamp);
+        target.metadataTimestamp = Math.max(target.metadataTimestamp ?? 0, sourceContentTimestamp);
+        target.archived = source.archived ?? target.archived;
+
+        if (!options.preserveTargetPin) {
+            const sourcePinScore = source.pinned ? source.pinnedTimestamp ?? 0 : -1;
+            const targetPinScore = target.pinned ? target.pinnedTimestamp ?? 0 : -1;
+            if (sourcePinScore > targetPinScore || target.pinned === undefined) {
+                target.pinned = source.pinned;
+                target.pinnedTimestamp = source.pinnedTimestamp;
+                target.pinnedRank = source.pinnedRank;
+            }
+        }
+
+        if (source.profilePicUrl && !target.profilePicUrl) {
+            target.profilePicUrl = source.profilePicUrl;
+        }
+        if (source.lastMessage && (!target.lastMessage || source.lastMessage.timestamp >= target.lastMessage.timestamp)) {
+            target.lastMessage = this.messageForChat(source.lastMessage, target.remoteJid);
+        }
+        if (source.lastActivity && (!target.lastActivity || source.lastActivity.timestamp >= target.lastActivity.timestamp)) {
+            target.lastActivity = this.messageForChat(source.lastActivity, target.remoteJid);
+        }
+        target.raw = {
+            ...(target.raw as object | undefined),
+            ...(source.raw as object | undefined),
+            id: target.remoteJid,
+        };
+    }
+
+    private moveMessagesToChat(sourceJid: string, targetJid: string): void {
+        const source = this.messages.get(sourceJid) ?? [];
+        const target = this.messages.get(targetJid) ?? [];
+        const merged = new Map<string, NormalizedMessage>();
+
+        for (const message of [...target, ...source]) {
+            if (message.type === "Reaction") {
+                continue;
+            }
+
+            const normalized = this.messageForChat(message, targetJid);
+            const existing = merged.get(normalized.id);
+            merged.set(normalized.id, existing ? this.mergeMessage(existing, normalized) : normalized);
+        }
+
+        const messages = [...merged.values()].sort((a, b) => a.timestamp - b.timestamp);
+        if (messages.length) {
+            this.messages.set(targetJid, messages);
+        }
+        if (sourceJid !== targetJid) {
+            this.messages.delete(sourceJid);
+        }
+    }
+
+    private messageForChat(message: NormalizedMessage, remoteJid: string): NormalizedMessage {
+        const raw = message.raw as WAMessage | undefined;
+        const normalizedRaw = raw
+            ? {
+                ...raw,
+                key: {
+                    ...raw.key,
+                    remoteJid,
+                },
+            } as WAMessage
+            : undefined;
+
+        const oldSignature = keySignature(message.key);
+        const storedRaw = this.rawMessages.get(oldSignature);
+        if (storedRaw && message.key.remoteJid !== remoteJid) {
+            this.rawMessages.delete(oldSignature);
+            this.rawMessages.set(`${remoteJid}:${message.id}`, {
+                ...storedRaw,
+                key: {
+                    ...storedRaw.key,
+                    remoteJid,
+                },
+            } as WAMessage);
+        }
+
+        return {
+            ...message,
+            remoteJid,
+            raw: normalizedRaw ?? message.raw,
+            key: {
+                ...message.key,
+                remoteJid,
+            },
+        };
+    }
+
+    private mergeMessage(existing: NormalizedMessage, incoming: NormalizedMessage): NormalizedMessage {
+        return {
+            ...existing,
+            ...incoming,
+            media: incoming.media ?? existing.media,
+            reactions: incoming.reactions ?? existing.reactions,
+            receipt: incoming.receipt ?? existing.receipt,
+            raw: incoming.raw ?? existing.raw,
+        };
     }
 
     private mergeContact(existing: Contact | undefined, incoming: Partial<Contact>, fallbackId: string): Contact {
@@ -1951,17 +2196,7 @@ class LocalWhatsAppService {
 
     private contactForJid(jid: string): Contact | undefined {
         const normalizedJid = stripDeviceSuffix(jid);
-        const direct = this.contacts.get(normalizedJid);
-        if (direct && contactSavedName(direct)) {
-            return direct;
-        }
-
-        const aliasMatch = [...this.contacts.values()].find((contact) => {
-            const aliases = this.contactAliases(contact);
-            return aliases.includes(normalizedJid) && Boolean(contactSavedName(contact));
-        });
-
-        return aliasMatch ?? direct;
+        return this.contacts.get(normalizedJid);
     }
 
     private savedContactNameForJid(jid: string): string | undefined {
