@@ -31,6 +31,12 @@ const appRoot = document.getElementById("app");
 let toastTimer: number | undefined;
 let events: EventSource | null = null;
 let pendingThreadScrollBottom = false;
+let renderQueued = false;
+let searchRenderTimer: number | undefined;
+let searchFocus: { start: number | null; end: number | null } | null = null;
+let backgroundSyncTimer: number | undefined;
+let backgroundSyncNeedsMessages = false;
+let backgroundSyncScrollToBottom = false;
 const CLIENT_CACHE_KEY = "whatsappmail.clientCache.v1";
 
 if (!appRoot) {
@@ -854,11 +860,31 @@ function renderShell(): string {
 }
 
 function render(): void {
-    app.innerHTML = renderShell();
-    afterRender();
+    if (renderQueued) {
+        return;
+    }
+
+    renderQueued = true;
+    window.requestAnimationFrame(() => {
+        renderQueued = false;
+        app.innerHTML = renderShell();
+        afterRender();
+    });
 }
 
 function afterRender(): void {
+    if (searchFocus) {
+        const focus = searchFocus;
+        searchFocus = null;
+        const input = app.querySelector<HTMLInputElement>(".search-input");
+        if (input && document.activeElement !== input) {
+            input.focus();
+            if (focus.start !== null && focus.end !== null) {
+                input.setSelectionRange(focus.start, focus.end);
+            }
+        }
+    }
+
     if (!pendingThreadScrollBottom) {
         return;
     }
@@ -1018,6 +1044,31 @@ async function loadMessages(remoteJid: string, options: LoadOptions = {}): Promi
     }
 }
 
+function scheduleBackgroundSync(options: { reloadOpenMessages?: boolean; scrollToBottom?: boolean } = {}): void {
+    backgroundSyncNeedsMessages = backgroundSyncNeedsMessages || Boolean(options.reloadOpenMessages);
+    backgroundSyncScrollToBottom = backgroundSyncScrollToBottom || Boolean(options.scrollToBottom);
+
+    if (backgroundSyncTimer) {
+        return;
+    }
+
+    backgroundSyncTimer = window.setTimeout(() => {
+        const reloadOpenMessages = backgroundSyncNeedsMessages;
+        const scrollToBottom = backgroundSyncScrollToBottom;
+        backgroundSyncTimer = undefined;
+        backgroundSyncNeedsMessages = false;
+        backgroundSyncScrollToBottom = false;
+
+        void loadChats({ showLoading: false });
+        if (state.openChatId && reloadOpenMessages) {
+            void loadMessages(state.openChatId, {
+                showLoading: false,
+                scrollToBottom,
+            });
+        }
+    }, 180);
+}
+
 function handleServerEvent(payload: ServerEventPayload): void {
     if (payload.type === "connection.update") {
         state.connection = eventConnectionState(payload.data);
@@ -1048,13 +1099,10 @@ function handleServerEvent(payload: ServerEventPayload): void {
 
         const shouldReloadOpenMessages = payload.type === "messages.upsert" || record.changed === true;
 
-        void loadChats({ showLoading: false });
-        if (state.openChatId && shouldReloadOpenMessages) {
-            void loadMessages(state.openChatId, {
-                showLoading: false,
-                scrollToBottom: payload.type === "messages.upsert",
-            });
-        }
+        scheduleBackgroundSync({
+            reloadOpenMessages: shouldReloadOpenMessages,
+            scrollToBottom: payload.type === "messages.upsert",
+        });
     }
 }
 
@@ -1573,14 +1621,23 @@ app.addEventListener("input", (event) => {
         return;
     }
 
-    const selectionStart = target.selectionStart;
     state.search = target.value;
-    render();
-    const next = app.querySelector<HTMLInputElement>(".search-input");
-    next?.focus();
-    if (selectionStart !== null) {
-        next?.setSelectionRange(selectionStart, selectionStart);
+    searchFocus = {
+        start: target.selectionStart,
+        end: target.selectionEnd,
+    };
+
+    if (searchRenderTimer) {
+        window.clearTimeout(searchRenderTimer);
     }
+
+    searchRenderTimer = window.setTimeout(() => {
+        searchRenderTimer = undefined;
+        if (!(document.activeElement instanceof HTMLInputElement) || !document.activeElement.classList.contains("search-input")) {
+            searchFocus = null;
+        }
+        render();
+    }, 100);
 });
 
 app.addEventListener("change", (event) => {
