@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import makeWASocket, {
     Browsers,
     DisconnectReason,
+    downloadMediaMessage,
     fetchLatestWaWebVersion,
     useMultiFileAuthState,
     type BaileysEventMap,
@@ -23,6 +24,7 @@ import QRCode from "qrcode";
 
 import {
     contactDisplayName,
+    contactSavedName,
     isIdentifierLike,
     keySignature,
     normalizeInputJid,
@@ -80,6 +82,13 @@ interface PersistedCache {
     contacts: Array<[string, Contact]>;
     chats: LocalChatProjection[];
     messages: Array<[string, NormalizedMessage[]]>;
+}
+
+interface DownloadedMedia {
+    buffer: Buffer;
+    mimetype: string;
+    fileName: string;
+    kind: string;
 }
 
 class HttpError extends Error {
@@ -170,11 +179,13 @@ class LocalWhatsAppService {
     private reconnectTimer: NodeJS.Timeout | null = null;
     private manualLogout = false;
     private coldHistoryRetryStarted = false;
+    private needsHistoryRefresh = false;
     private persistTimer: NodeJS.Timeout | null = null;
     private readonly chats = new Map<string, LocalChatProjection>();
     private readonly contacts = new Map<string, Contact>();
     private readonly messages = new Map<string, NormalizedMessage[]>();
     private readonly rawMessages = new Map<string, WAMessage>();
+    private readonly profilePictureRequests = new Set<string>();
 
     private snapshot: SessionSnapshot = {
         status: "idle",
@@ -204,9 +215,22 @@ class LocalWhatsAppService {
             const cache = JSON.parse(readFileSync(this.config.cachePath, "utf8")) as Partial<PersistedCache>;
 
             for (const [jid, contact] of cache.contacts ?? []) {
-                const normalizedJid = stripDeviceSuffix(jid);
-                if (normalizedJid) {
-                    this.contacts.set(normalizedJid, contact);
+                const aliases = this.contactAliases({
+                    ...contact,
+                    id: contact.id || jid,
+                });
+                if (!aliases.length) {
+                    continue;
+                }
+
+                const preferredAlias = aliases.find((alias) => alias.endsWith("@lid")) ?? aliases[0];
+                const existing = aliases
+                    .map((alias) => this.contacts.get(alias))
+                    .filter((value): value is Contact => Boolean(value))
+                    .sort((a, b) => Number(Boolean(contactSavedName(b))) - Number(Boolean(contactSavedName(a))))[0];
+                const merged = this.mergeContact(existing, contact, preferredAlias);
+                for (const alias of this.contactAliases(merged)) {
+                    this.contacts.set(alias, merged);
                 }
             }
 
@@ -216,12 +240,14 @@ class LocalWhatsAppService {
                 }
 
                 const jid = stripDeviceSuffix(chat.remoteJid);
-                this.chats.set(jid, {
+                const loadedChat = {
                     ...chat,
                     remoteJid: jid,
                     timestamp: chat.timestamp ?? chat.lastMessage?.timestamp ?? 0,
                     metadataTimestamp: chat.metadataTimestamp ?? chat.timestamp ?? chat.lastMessage?.timestamp ?? 0,
-                });
+                };
+                this.applyChatName(loadedChat, this.displayNameForJid(jid, loadedChat.name), Boolean(this.savedContactNameForJid(jid)));
+                this.chats.set(jid, loadedChat);
             }
 
             for (const [jid, list] of cache.messages ?? []) {
@@ -236,6 +262,10 @@ class LocalWhatsAppService {
                         continue;
                     }
 
+                    if (normalizedJid.endsWith("@g.us") && !message.fromMe && !message.participant) {
+                        this.needsHistoryRefresh = true;
+                    }
+
                     unique.set(message.id, {
                         ...message,
                         remoteJid: normalizedJid,
@@ -248,6 +278,11 @@ class LocalWhatsAppService {
 
                 const messages = [...unique.values()].sort((a, b) => a.timestamp - b.timestamp);
                 this.messages.set(normalizedJid, messages);
+                for (const message of messages) {
+                    if (message.raw) {
+                        this.rawMessages.set(keySignature(message.key), message.raw as WAMessage);
+                    }
+                }
 
                 const latest = messages[messages.length - 1];
                 if (latest) {
@@ -278,6 +313,10 @@ class LocalWhatsAppService {
             mkdirSync(this.config.dataDir, { recursive: true });
 
             const stripMessageRaw = (message: NormalizedMessage): NormalizedMessage => {
+                if (message.media) {
+                    return message;
+                }
+
                 const { raw, ...rest } = message;
                 return rest;
             };
@@ -326,14 +365,21 @@ class LocalWhatsAppService {
         const limit = Math.max(1, Math.min(options.limit ?? 100, 200));
         const folder = options.folder ?? "inbox";
 
-        let chats = [...this.chats.values()]
-            .filter((chat) => folder === "archive" ? chat.archived : !chat.archived)
-            .map((chat) => normalizeLocalChat(chat));
+        let sourceChats = [...this.chats.values()]
+            .filter((chat) => folder === "archive" ? chat.archived : !chat.archived);
 
         if (query) {
-            chats = chats.filter((chat) => `${chat.name} ${chat.subject} ${chat.snippet}`.toLowerCase().includes(query));
+            sourceChats = sourceChats.filter((chat) => {
+                const normalized = normalizeLocalChat(chat);
+                return `${normalized.name} ${normalized.subject} ${normalized.snippet}`.toLowerCase().includes(query);
+            });
         }
 
+        for (const chat of sourceChats.slice(offset, offset + limit)) {
+            this.queueProfilePictureFetch(chat.remoteJid);
+        }
+
+        const chats = sourceChats.map((chat) => normalizeLocalChat(chat));
         chats.sort((a, b) => b.timestamp - a.timestamp);
         return {
             chats: chats.slice(offset, offset + limit),
@@ -343,7 +389,18 @@ class LocalWhatsAppService {
 
     public listMessages(remoteJid: string, page: number, limit: number): { messages: NormalizedMessage[]; total: number } {
         const jid = normalizeInputJid(remoteJid);
-        const allMessages = [...(this.messages.get(jid) ?? [])].sort((a, b) => a.timestamp - b.timestamp);
+        const chat = this.chats.get(jid);
+        const allMessages = [...(this.messages.get(jid) ?? [])]
+            .map((message) => ({
+                ...message,
+                senderName: message.fromMe ? "me" : jid.endsWith("@g.us") ? this.displayNameForJid(message.participant ?? "", message.senderName) : chat?.name ?? this.displayNameForJid(jid, message.senderName),
+                media: message.media ? {
+                    ...message.media,
+                    url: `/api/media/${encodeURIComponent(jid)}/${encodeURIComponent(message.id)}`,
+                } : undefined,
+                status: message.status && message.status !== "null" ? message.status : undefined,
+            }))
+            .sort((a, b) => a.timestamp - b.timestamp);
         const safeLimit = Math.max(1, Math.min(limit, 200));
         const end = Math.max(0, allMessages.length - (Math.max(1, page) - 1) * safeLimit);
         const start = Math.max(0, end - safeLimit);
@@ -352,6 +409,39 @@ class LocalWhatsAppService {
         return {
             messages,
             total: allMessages.length,
+        };
+    }
+
+    public async downloadMedia(remoteJid: string, messageId: string): Promise<DownloadedMedia> {
+        const jid = normalizeInputJid(remoteJid);
+        const message = this.messages.get(jid)?.find((item) => item.id === messageId);
+        if (!message?.media) {
+            throw new HttpError(404, "Media message was not found.");
+        }
+
+        const raw = this.rawMessages.get(keySignature(message.key)) ?? message.raw as WAMessage | undefined;
+        if (!raw) {
+            throw new HttpError(404, "Media payload is not available yet. Refresh WhatsApp history and try again.");
+        }
+
+        const socket = this.socket;
+        const buffer = await downloadMediaMessage(
+            raw,
+            "buffer",
+            {},
+            socket
+                ? {
+                    reuploadRequest: socket.updateMediaMessage,
+                    logger: socket.logger,
+                }
+                : undefined,
+        );
+
+        return {
+            buffer: Buffer.from(buffer),
+            mimetype: message.media.mimetype || "application/octet-stream",
+            fileName: message.media.fileName || `${message.id}.${message.media.kind}`,
+            kind: message.media.kind,
         };
     }
 
@@ -572,8 +662,14 @@ class LocalWhatsAppService {
 
     private async createSocket(): Promise<void> {
         const authState = await useMultiFileAuthState(this.config.authDir);
-        if (!existsSync(this.config.cachePath) && this.chats.size === 0 && authState.state.creds.processedHistoryMessages.length > 0) {
+        const shouldRefreshHistory = (
+            (!existsSync(this.config.cachePath) && this.chats.size === 0)
+            || this.needsHistoryRefresh
+        ) && authState.state.creds.processedHistoryMessages.length > 0;
+
+        if (shouldRefreshHistory) {
             authState.state.creds.processedHistoryMessages = [];
+            this.needsHistoryRefresh = false;
             await authState.saveCreds();
         }
 
@@ -665,6 +761,9 @@ class LocalWhatsAppService {
                 lastDisconnectReason: null,
                 hasAuthState: true,
             });
+            for (const chat of [...this.chats.values()].slice(0, 100)) {
+                this.queueProfilePictureFetch(chat.remoteJid);
+            }
             return;
         }
 
@@ -713,20 +812,26 @@ class LocalWhatsAppService {
             }
 
             const aliases = this.contactAliases(contact);
-            const primaryJid = aliases[0];
-            const merged = {
-                ...this.contacts.get(primaryJid),
-                ...contact,
-                id: primaryJid,
-            } as Contact;
+            const primaryJid = aliases.find((alias) => alias.endsWith("@lid")) ?? aliases[0];
+            const existing = aliases
+                .map((alias) => this.contacts.get(alias))
+                .filter((value): value is Contact => Boolean(value))
+                .sort((a, b) => Number(Boolean(contactSavedName(b))) - Number(Boolean(contactSavedName(a))))[0];
+            const merged = this.mergeContact(existing, contact, primaryJid);
 
-            for (const alias of aliases) {
+            for (const alias of this.contactAliases(merged)) {
                 this.contacts.set(alias, merged);
             }
 
-            const chat = aliases.map((alias) => this.chats.get(alias)).find(Boolean);
+            const chat = this.contactAliases(merged).map((alias) => this.chats.get(alias)).find(Boolean);
             if (chat) {
-                this.applyChatName(chat, contactDisplayName(merged, chat.remoteJid));
+                const savedName = this.savedContactNameForJid(chat.remoteJid);
+                this.applyChatName(chat, savedName ?? contactDisplayName(merged, chat.remoteJid), Boolean(savedName));
+                if (typeof merged.imgUrl === "string" && merged.imgUrl && merged.imgUrl !== "changed") {
+                    chat.profilePicUrl = merged.imgUrl;
+                } else if (merged.imgUrl === "changed") {
+                    this.queueProfilePictureFetch(chat.remoteJid);
+                }
             }
         }
 
@@ -749,7 +854,8 @@ class LocalWhatsAppService {
                 messages?: Array<{ message?: WAMessage } | WAMessage>;
                 subject?: string;
             };
-            this.applyChatName(existing, this.chatDisplayName(jid, chatRecord));
+            const savedName = this.savedContactNameForJid(jid);
+            this.applyChatName(existing, savedName ?? this.chatDisplayName(jid, chatRecord), Boolean(savedName || jid.endsWith("@g.us")));
             existing.unreadCount = typeof chat.unreadCount === "number" ? chat.unreadCount : existing.unreadCount;
             existing.metadataTimestamp = Math.max(
                 existing.metadataTimestamp ?? 0,
@@ -762,6 +868,7 @@ class LocalWhatsAppService {
                 ...chat,
                 id: jid,
             };
+            this.queueProfilePictureFetch(jid);
 
             for (const embeddedMessage of this.embeddedChatMessages(chatRecord)) {
                 this.saveRawMessage(embeddedMessage, false);
@@ -810,6 +917,11 @@ class LocalWhatsAppService {
             return null;
         }
 
+        if (!normalized.fromMe) {
+            const senderJid = normalized.participant ?? normalized.remoteJid;
+            normalized.senderName = this.displayNameForJid(senderJid, normalized.senderName);
+        }
+
         this.coldHistoryRetryStarted = false;
         this.rawMessages.set(keySignature(normalized.key), raw);
         const current = this.messages.get(normalized.remoteJid) ?? [];
@@ -831,7 +943,11 @@ class LocalWhatsAppService {
         chat.lastMessage = latest;
         chat.timestamp = Math.max(chat.timestamp ?? 0, latest.timestamp, normalized.timestamp);
         chat.metadataTimestamp = Math.max(chat.metadataTimestamp ?? 0, latest.timestamp, normalized.timestamp);
-        this.applyChatName(chat, latest.fromMe ? undefined : latest.senderName);
+        if (!normalized.remoteJid.endsWith("@g.us")) {
+            const savedName = this.savedContactNameForJid(normalized.remoteJid);
+            this.applyChatName(chat, savedName ?? (latest.fromMe ? undefined : latest.senderName), Boolean(savedName));
+        }
+        this.queueProfilePictureFetch(normalized.remoteJid);
         if (inserted && countUnread && !normalized.fromMe) {
             chat.unreadCount = (chat.unreadCount ?? 0) + 1;
         }
@@ -849,7 +965,7 @@ class LocalWhatsAppService {
 
         const chat: LocalChatProjection = {
             remoteJid: jid,
-            name: contactDisplayName(this.contacts.get(jid), jid),
+            name: this.displayNameForJid(jid),
             unreadCount: 0,
             timestamp: 0,
             metadataTimestamp: 0,
@@ -857,6 +973,51 @@ class LocalWhatsAppService {
         };
         this.chats.set(jid, chat);
         return chat;
+    }
+
+    private mergeContact(existing: Contact | undefined, incoming: Partial<Contact>, fallbackId: string): Contact {
+        return {
+            ...(existing ?? { id: fallbackId }),
+            ...incoming,
+            id: existing?.id ?? incoming.id ?? fallbackId,
+            lid: incoming.lid ?? existing?.lid,
+            phoneNumber: incoming.phoneNumber ?? existing?.phoneNumber,
+            name: incoming.name || existing?.name,
+            notify: incoming.notify || existing?.notify,
+            verifiedName: incoming.verifiedName || existing?.verifiedName,
+            imgUrl: incoming.imgUrl === undefined ? existing?.imgUrl : incoming.imgUrl,
+            status: incoming.status ?? existing?.status,
+        } as Contact;
+    }
+
+    private contactForJid(jid: string): Contact | undefined {
+        const normalizedJid = stripDeviceSuffix(jid);
+        const direct = this.contacts.get(normalizedJid);
+        if (direct && contactSavedName(direct)) {
+            return direct;
+        }
+
+        const aliasMatch = [...this.contacts.values()].find((contact) => {
+            const aliases = this.contactAliases(contact);
+            return aliases.includes(normalizedJid) && Boolean(contactSavedName(contact));
+        });
+
+        return aliasMatch ?? direct;
+    }
+
+    private savedContactNameForJid(jid: string): string | undefined {
+        return contactSavedName(this.contactForJid(jid));
+    }
+
+    private displayNameForJid(jid: string, fallback?: string): string {
+        const contact = this.contactForJid(jid);
+        const savedName = contactSavedName(contact);
+        if (savedName) {
+            return savedName;
+        }
+
+        const candidate = fallback && !isIdentifierLike(fallback) ? fallback : undefined;
+        return candidate ?? contactDisplayName(contact, jid);
     }
 
     private contactAliases(contact: Partial<Contact>): string[] {
@@ -875,20 +1036,20 @@ class LocalWhatsAppService {
             chat.name,
             chat.displayName,
             jid.endsWith("@g.us") ? chat.subject : undefined,
-            contactDisplayName(this.contacts.get(jid), jid),
-            chat.accountLid ? contactDisplayName(this.contacts.get(stripDeviceSuffix(chat.accountLid)), jid) : undefined,
-            chat.lid ? contactDisplayName(this.contacts.get(stripDeviceSuffix(chat.lid)), jid) : undefined,
+            this.displayNameForJid(jid),
+            chat.accountLid ? this.displayNameForJid(stripDeviceSuffix(chat.accountLid)) : undefined,
+            chat.lid ? this.displayNameForJid(stripDeviceSuffix(chat.lid)) : undefined,
         ];
 
         return candidates.find((candidate) => candidate && !isIdentifierLike(candidate)) ?? candidates.find(Boolean) ?? contactDisplayName(undefined, jid);
     }
 
-    private applyChatName(chat: LocalChatProjection, candidate: string | undefined): void {
+    private applyChatName(chat: LocalChatProjection, candidate: string | undefined, preferred = false): void {
         if (!candidate) {
             return;
         }
 
-        if (!chat.name || isIdentifierLike(chat.name) || !isIdentifierLike(candidate)) {
+        if (preferred || !chat.name || isIdentifierLike(chat.name)) {
             chat.name = candidate;
         }
     }
@@ -904,6 +1065,36 @@ class LocalWhatsAppService {
                 return record.key ? item as WAMessage : record.message as WAMessage | undefined;
             })
             .filter((message): message is WAMessage => Boolean(message?.key?.remoteJid && message.key.id));
+    }
+
+    private queueProfilePictureFetch(remoteJid: string): void {
+        const jid = stripDeviceSuffix(remoteJid);
+        if (!jid || jid === "status@broadcast" || this.profilePictureRequests.has(jid)) {
+            return;
+        }
+
+        const chat = this.chats.get(jid);
+        if (!chat || chat.profilePicUrl || !this.socket || this.snapshot.status !== "open") {
+            return;
+        }
+
+        this.profilePictureRequests.add(jid);
+        void this.socket.profilePictureUrl(jid, "image")
+            .then((url) => {
+                if (!url) {
+                    return;
+                }
+
+                chat.profilePicUrl = url;
+                this.queuePersist();
+                this.hub.publish({ type: "messages.update", data: { remoteJid: jid, profilePicUrl: true } });
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                setTimeout(() => {
+                    this.profilePictureRequests.delete(jid);
+                }, 10 * 60 * 1000);
+            });
     }
 
     private updateSnapshot(patch: Partial<SessionSnapshot>): void {
@@ -1095,6 +1286,14 @@ app.get("/api/chats/:remoteJid/messages", (req, res) => {
         Number(req.query.limit ?? 80),
     ));
 });
+
+app.get("/api/media/:remoteJid/:messageId", asyncHandler(async (req, res) => {
+    const media = await whatsapp.downloadMedia(routeParam(req.params.remoteJid), routeParam(req.params.messageId));
+    res.setHeader("Content-Type", media.mimetype);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(media.fileName)}"`);
+    res.send(media.buffer);
+}));
 
 app.post("/api/messages/text", asyncHandler(async (req, res) => {
     const remoteJid = String(req.body?.remoteJid ?? "");

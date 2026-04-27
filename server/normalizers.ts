@@ -150,7 +150,8 @@ export function isIdentifierLike(value: string | undefined | null): boolean {
         return true;
     }
 
-    return text.endsWith("@s.whatsapp.net")
+    return text === "*"
+        || text.endsWith("@s.whatsapp.net")
         || text.endsWith("@lid")
         || /^\+?\d[\d\s().-]{6,}$/.test(text);
 }
@@ -187,6 +188,11 @@ export function timestampSeconds(value: WAMessage["messageTimestamp"] | Chat["co
 export function contactDisplayName(contact: Partial<Contact> | undefined, fallbackJid: string): string {
     const record = asRecord(contact);
     return asString(record.name || record.verifiedName || record.notify || record.pushName, jidToDisplayName(fallbackJid));
+}
+
+export function contactSavedName(contact: Partial<Contact> | undefined): string | undefined {
+    const name = asString(asRecord(contact).name).trim();
+    return name && !isIdentifierLike(name) ? name : undefined;
 }
 
 function contentRecord(value: unknown): UnknownRecord {
@@ -268,6 +274,18 @@ function extractMessageText(contentType: string, content: UnknownRecord): { text
         };
     }
 
+    if (contentType === "callLogMessage" || contentType === "callLogMesssage") {
+        const isVideo = Boolean(content.isVideo);
+        const subject = isVideo ? "Video call" : "Voice call";
+        const outcome = asString(content.callOutcome).toLowerCase();
+        const text = outcome && outcome !== "0" ? `${subject} (${outcome})` : subject;
+        return { text, subject };
+    }
+
+    if (contentType === "scheduledCallCreationMessage" || contentType === "scheduledCallEditMessage") {
+        return { text: "Scheduled call", subject: "Scheduled call" };
+    }
+
     if (contentType === "reactionMessage") {
         return {
             text: asString(content.text, "Reaction"),
@@ -306,7 +324,12 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
     const content = contentRecord(normalizedContent?.[contentType as keyof MessageContent]);
     const extracted = extractMessageText(contentType, content);
     const timestamp = timestampSeconds(raw.messageTimestamp);
-    const participant = raw.key.participant ? stripDeviceSuffix(raw.key.participant) : undefined;
+    const participantFromEnvelope = optionalString(asRecord(raw).participant);
+    const participant = raw.key.participant
+        ? stripDeviceSuffix(raw.key.participant)
+        : participantFromEnvelope
+          ? stripDeviceSuffix(participantFromEnvelope)
+          : undefined;
     const fromMe = Boolean(raw.key.fromMe);
     const senderJid = fromMe ? ownerJid : participant ?? remoteJid;
     const senderName = fromMe ? "me" : raw.pushName ?? jidToDisplayName(senderJid);
@@ -340,19 +363,34 @@ export function normalizeLocalChat(chat: LocalChatProjection): NormalizedChat {
     const lastMessage = chat.lastMessage;
     const messageTimestamp = lastMessage?.timestamp ?? 0;
     const metadataTimestamp = chat.metadataTimestamp ?? chat.timestamp ?? 0;
-    const hasNewerMetadata = Boolean(lastMessage && metadataTimestamp > messageTimestamp + 60);
-    const timestamp = metadataTimestamp || messageTimestamp;
+    const timestamp = lastMessage ? messageTimestamp : metadataTimestamp;
+    const rawSenderName = lastMessage?.fromMe ? "You" : lastMessage?.senderName;
+    const senderName = rawSenderName && !isIdentifierLike(rawSenderName) ? rawSenderName : "Someone";
+    const groupPreview = Boolean(isGroup && lastMessage);
+    const isTextMessage = lastMessage?.type === "Text message";
+    const messageText = lastMessage?.text.trim() ?? "";
+    const repeatedMediaText = Boolean(lastMessage && messageText === lastMessage.type);
+    const subject = groupPreview
+        ? `${senderName || "Someone"}:`
+        : lastMessage?.fromMe
+          ? isTextMessage
+            ? "You:"
+            : `You: ${lastMessage.type}`
+          : isTextMessage
+            ? messageText || "Text message"
+            : lastMessage?.type || (isGroup ? "Group chat" : "Chat");
+    const snippet = groupPreview
+        ? messageText || lastMessage?.type || ""
+        : isTextMessage
+          ? lastMessage?.fromMe ? messageText : ""
+          : repeatedMediaText ? "" : messageText || "No recent messages";
 
     return {
         id: remoteJid,
         remoteJid,
         name,
-        subject: hasNewerMetadata
-            ? "Syncing latest message"
-            : lastMessage?.fromMe
-              ? `You: ${lastMessage.type}`
-              : lastMessage?.type || (isGroup ? "Group chat" : "Chat"),
-        snippet: hasNewerMetadata ? "Latest WhatsApp message is still loading" : lastMessage?.text || "No recent messages",
+        subject,
+        snippet,
         timestamp,
         timeLabel: formatTimeLabel(timestamp),
         unreadCount: Math.max(0, chat.unreadCount ?? 0),

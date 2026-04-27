@@ -307,12 +307,22 @@ function renderChatRow(chat: WhatsAppChatRow): string {
                 </button>
             </div>
             <div class="sender">${avatarInline(chat)}${escapeHtml(chat.name)}${chat.unreadCount ? ` <span class="chat-count">${escapeHtml(chat.unreadCount)}</span>` : ""}</div>
-            <div class="message">
-                <span class="subject">${chat.isGroup ? `<span class="group-chip">Group</span>` : ""}${escapeHtml(chat.subject)}</span>
-                <span class="snippet">- ${escapeHtml(chat.snippet)}</span>
-            </div>
+            ${renderChatPreview(chat)}
             <time>${escapeHtml(chat.timeLabel)}</time>
         </article>
+    `;
+}
+
+function renderChatPreview(chat: WhatsAppChatRow): string {
+    const groupSenderPreview = Boolean(chat.isGroup && chat.lastMessage);
+    const senderStylePreview = groupSenderPreview || chat.subject.endsWith(":");
+    const separator = senderStylePreview ? " " : "- ";
+
+    return `
+        <div class="message">
+            <span class="subject">${chat.isGroup ? `<span class="group-chip">Group</span>` : ""}${escapeHtml(chat.subject)}</span>
+            ${chat.snippet ? `<span class="snippet">${separator}${escapeHtml(chat.snippet)}</span>` : ""}
+        </div>
     `;
 }
 
