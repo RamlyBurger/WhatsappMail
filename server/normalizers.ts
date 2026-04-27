@@ -56,6 +56,7 @@ export interface NormalizedMessage {
     status?: string;
     receipt?: WhatsAppReadReceipt;
     key: WhatsAppMessageKey;
+    senderProfilePicUrl?: string;
     media?: WhatsAppMediaPreview;
     reactions?: WhatsAppReaction[];
     forwarded?: boolean;
@@ -351,6 +352,10 @@ export function contactSavedName(contact: Partial<Contact> | undefined): string 
 
 function contentRecord(value: unknown): UnknownRecord {
     return typeof value === "string" ? { text: value } : asRecord(value);
+}
+
+function isInternalMessageContentType(contentType: string | undefined): boolean {
+    return contentType === "associatedChildMessage" || contentType === "albumMessage";
 }
 
 function normalizeTimestampMs(value: unknown): number | undefined {
@@ -737,6 +742,9 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
     const contentType = getContentType(normalizedContent);
     if (!contentType || contentType === "protocolMessage") {
         return normalizeStubMessage(raw, ownerJid);
+    }
+    if (isInternalMessageContentType(contentType)) {
+        return null;
     }
 
     const content = contentRecord(normalizedContent?.[contentType as keyof MessageContent]);

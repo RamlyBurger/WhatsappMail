@@ -52,6 +52,7 @@ export interface WhatsAppMessage {
     status?: string;
     receipt?: WhatsAppReadReceipt;
     key: WhatsAppMessageKey;
+    senderProfilePicUrl?: string;
     media?: WhatsAppMediaPreview;
     reactions?: WhatsAppReaction[];
     forwarded?: boolean;

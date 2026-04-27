@@ -310,7 +310,7 @@ class LocalWhatsAppService {
                     pinnedTimestamp: chat.pinnedTimestamp ?? (fallbackPinned ? Number.MAX_SAFE_INTEGER - chatIndex : undefined),
                     pinnedRank: chat.pinnedRank ?? (fallbackPinned ? chatIndex : undefined),
                 };
-                this.removeReactionActivity(loadedChat);
+                this.removeHiddenActivity(loadedChat);
                 this.applyChatName(loadedChat, this.displayNameForJid(jid, loadedChat.name), Boolean(this.savedContactNameForJid(jid)));
                 const existing = this.chats.get(jid);
                 if (existing) {
@@ -332,7 +332,7 @@ class LocalWhatsAppService {
                         continue;
                     }
 
-                    if (message.type === "Reaction") {
+                    if (this.isHiddenMessage(message)) {
                         continue;
                     }
 
@@ -363,13 +363,16 @@ class LocalWhatsAppService {
                             remoteJid: normalizedJid,
                         },
                     });
+                    if (this.isHiddenMessage(cachedMessage)) {
+                        continue;
+                    }
 
                     unique.set(message.id, cachedMessage);
                 }
 
                 const mergedMessages = new Map<string, NormalizedMessage>();
                 for (const existingMessage of this.messages.get(normalizedJid) ?? []) {
-                    if (existingMessage.type !== "Reaction") {
+                    if (!this.isHiddenMessage(existingMessage)) {
                         mergedMessages.set(existingMessage.id, existingMessage);
                     }
                 }
@@ -467,7 +470,7 @@ class LocalWhatsAppService {
                 chats: [...this.chats.values()].map(stripChatRaw),
                 messages: [...this.messages.entries()].map(([jid, messages]) => [
                     jid,
-                    messages.filter((message) => message.type !== "Reaction").slice(-500).map(stripMessageRaw),
+                    messages.filter((message) => !this.isHiddenMessage(message)).slice(-500).map(stripMessageRaw),
                 ]),
             };
 
@@ -519,7 +522,7 @@ class LocalWhatsAppService {
             }
         }
 
-        const chats = sourceChats.map((chat) => normalizeLocalChat(chat));
+        const chats = sourceChats.map((chat) => normalizeLocalChat(this.chatWithResolvedSenders(chat)));
         chats.sort((a, b) => {
             if (a.isPinned !== b.isPinned) {
                 return a.isPinned ? -1 : 1;
@@ -543,19 +546,8 @@ class LocalWhatsAppService {
         this.mergeChatAliasesForJid(jid);
         const chat = this.chats.get(jid);
         const allMessages: NormalizedMessage[] = [...(this.messages.get(jid) ?? [])]
-            .filter((message) => message.type !== "Reaction")
-            .map((message) => withMessageReceipt({
-                ...message,
-                senderName: message.fromMe ? "me" : jid.endsWith("@g.us") ? this.groupDisplayNameForJid(message.participant ?? "", message.senderName) : chat?.name ?? this.displayNameForJid(jid, message.senderName),
-                media: message.media ? {
-                    ...message.media,
-                    url: `/api/media/${encodeURIComponent(jid)}/${encodeURIComponent(message.id)}`,
-                } : undefined,
-                reactions: message.reactions?.map((reaction) => ({
-                    ...reaction,
-                    senderName: reaction.fromMe ? "me" : jid.endsWith("@g.us") ? this.groupDisplayNameForJid(reaction.senderJid ?? "", reaction.senderName) : this.displayNameForJid(reaction.senderJid ?? "", reaction.senderName),
-                })),
-            }))
+            .filter((message) => !this.isHiddenMessage(message))
+            .map((message) => this.messageWithResolvedSender(message, jid, chat))
             .sort((a, b) => a.timestamp - b.timestamp);
         const metadataActivity = chat ? createMetadataActivityMessage(chat) : undefined;
         if (metadataActivity && !allMessages.some((message) => message.id === metadataActivity.id)) {
@@ -574,6 +566,16 @@ class LocalWhatsAppService {
         const end = Math.max(0, allMessages.length - (Math.max(1, page) - 1) * safeLimit);
         const start = Math.max(0, end - safeLimit);
         const messages = allMessages.slice(start, end);
+        for (const message of messages) {
+            if (jid.endsWith("@g.us") && !message.fromMe && message.participant && !message.senderProfilePicUrl) {
+                this.queueContactProfilePictureFetch(message.participant, jid);
+            }
+            for (const reaction of message.reactions ?? []) {
+                if (!reaction.fromMe && reaction.senderJid) {
+                    this.queueContactProfilePictureFetch(reaction.senderJid, jid);
+                }
+            }
+        }
 
         return {
             messages,
@@ -1868,7 +1870,7 @@ class LocalWhatsAppService {
 
         const chat = this.ensureChat(jid);
         const current = [...(this.messages.get(jid) ?? [])]
-            .filter((message) => message.type !== "Reaction")
+            .filter((message) => !this.isHiddenMessage(message))
             .sort((a, b) => a.timestamp - b.timestamp);
         if (current.length !== (this.messages.get(jid) ?? []).length) {
             this.messages.set(jid, current);
@@ -1920,7 +1922,7 @@ class LocalWhatsAppService {
             return null;
         }
 
-        if (normalized.type === "Reaction") {
+        if (this.isHiddenMessage(normalized)) {
             return null;
         }
 
@@ -2013,13 +2015,22 @@ class LocalWhatsAppService {
         return [...new Set([jid, ...(contact ? this.contactAliases(contact) : [])].filter(Boolean))];
     }
 
-    private removeReactionActivity(chat: LocalChatProjection): void {
+    private isHiddenMessage(message: Pick<NormalizedMessage, "type"> | undefined | null): boolean {
+        const type = message?.type;
+        return type === "Reaction"
+            || type === "associatedChild"
+            || type === "associatedChildMessage"
+            || type === "album"
+            || type === "albumMessage";
+    }
+
+    private removeHiddenActivity(chat: LocalChatProjection): void {
         let removed = false;
-        if (chat.lastMessage?.type === "Reaction") {
+        if (this.isHiddenMessage(chat.lastMessage)) {
             chat.lastMessage = undefined;
             removed = true;
         }
-        if (chat.lastActivity?.type === "Reaction") {
+        if (this.isHiddenMessage(chat.lastActivity)) {
             chat.lastActivity = undefined;
             removed = true;
         }
@@ -2071,8 +2082,8 @@ class LocalWhatsAppService {
     }
 
     private mergeChatInto(target: LocalChatProjection, source: LocalChatProjection, options: { preserveTargetPin?: boolean } = {}): void {
-        this.removeReactionActivity(source);
-        this.removeReactionActivity(target);
+        this.removeHiddenActivity(source);
+        this.removeHiddenActivity(target);
 
         const savedName = this.savedContactNameForJid(target.remoteJid);
         this.applyChatName(target, savedName ?? source.name, Boolean(savedName));
@@ -2114,7 +2125,7 @@ class LocalWhatsAppService {
         const merged = new Map<string, NormalizedMessage>();
 
         for (const message of [...target, ...source]) {
-            if (message.type === "Reaction") {
+            if (this.isHiddenMessage(message)) {
                 continue;
             }
 
@@ -2199,6 +2210,42 @@ class LocalWhatsAppService {
         return this.contacts.get(normalizedJid);
     }
 
+    private chatWithResolvedSenders(chat: LocalChatProjection): LocalChatProjection {
+        return {
+            ...chat,
+            lastMessage: chat.lastMessage ? this.messageWithResolvedSender(chat.lastMessage, chat.remoteJid, chat) : undefined,
+            lastActivity: chat.lastActivity ? this.messageWithResolvedSender(chat.lastActivity, chat.remoteJid, chat) : undefined,
+        };
+    }
+
+    private messageWithResolvedSender(message: NormalizedMessage, remoteJid: string, chat?: LocalChatProjection): NormalizedMessage {
+        const jid = stripDeviceSuffix(remoteJid);
+        const senderJid = message.fromMe ? this.snapshot.ownerJid ?? "" : message.participant ?? (jid.endsWith("@g.us") ? "" : jid);
+        const senderName = message.fromMe
+            ? "me"
+            : jid.endsWith("@g.us")
+              ? this.groupDisplayNameForJid(senderJid, message.senderName)
+              : chat?.name ?? this.displayNameForJid(jid, message.senderName);
+
+        return withMessageReceipt({
+            ...message,
+            senderName,
+            senderProfilePicUrl: this.profilePictureUrlForJid(senderJid),
+            media: message.media ? {
+                ...message.media,
+                url: `/api/media/${encodeURIComponent(jid)}/${encodeURIComponent(message.id)}`,
+            } : undefined,
+            reactions: message.reactions?.map((reaction) => ({
+                ...reaction,
+                senderName: reaction.fromMe
+                    ? "me"
+                    : jid.endsWith("@g.us")
+                      ? this.groupDisplayNameForJid(reaction.senderJid ?? "", reaction.senderName)
+                      : this.displayNameForJid(reaction.senderJid ?? "", reaction.senderName),
+            })),
+        });
+    }
+
     private savedContactNameForJid(jid: string): string | undefined {
         return contactSavedName(this.contactForJid(jid));
     }
@@ -2232,7 +2279,23 @@ class LocalWhatsAppService {
             fallback,
         ];
 
-        return candidates.map((candidate) => this.displayNameCandidate(candidate)).find(Boolean) ?? "Someone";
+        const candidate = candidates.map((value) => this.displayNameCandidate(value)).find(Boolean);
+        if (candidate) {
+            return candidate;
+        }
+
+        const phoneNumber = typeof contact?.phoneNumber === "string" ? stripDeviceSuffix(contact.phoneNumber) : "";
+        if (phoneNumber) {
+            return jidToDisplayName(phoneNumber);
+        }
+
+        const normalizedJid = stripDeviceSuffix(jid);
+        if (normalizedJid.endsWith("@s.whatsapp.net")) {
+            return jidToDisplayName(normalizedJid);
+        }
+
+        const fallbackText = String(fallback ?? "").trim();
+        return fallbackText && fallbackText !== "Someone" && fallbackText !== "WhatsApp user" ? fallbackText : "Someone";
     }
 
     private groupTargetDisplayNameForJid(jid: string, fallback?: string): string {
@@ -2326,6 +2389,37 @@ class LocalWhatsAppService {
             .filter((message): message is WAMessage => Boolean(message?.key?.remoteJid && message.key.id));
     }
 
+    private validProfilePictureUrl(value: unknown): string | undefined {
+        return typeof value === "string" && value && value !== "changed" ? value : undefined;
+    }
+
+    private profilePictureUrlForJid(jid: string | null | undefined): string | undefined {
+        const normalizedJid = jid ? stripDeviceSuffix(jid) : "";
+        if (!normalizedJid) {
+            return undefined;
+        }
+
+        if (this.isOwnJid(normalizedJid)) {
+            return this.snapshot.profilePictureUrl ?? undefined;
+        }
+
+        const contact = this.contactForJid(normalizedJid);
+        const contactPhoto = this.validProfilePictureUrl((contact as { imgUrl?: unknown } | undefined)?.imgUrl);
+        if (contactPhoto) {
+            return contactPhoto;
+        }
+
+        const chatPhoto = this.validProfilePictureUrl(this.chats.get(this.canonicalChatJid(normalizedJid))?.profilePicUrl);
+        return chatPhoto;
+    }
+
+    private profilePictureLookupJid(jid: string): string {
+        const normalizedJid = stripDeviceSuffix(jid);
+        const contact = this.contactForJid(normalizedJid);
+        return this.contactAliases(contact ?? { id: normalizedJid }).find((alias) => alias.endsWith("@s.whatsapp.net"))
+            ?? normalizedJid;
+    }
+
     private queueProfilePictureFetch(remoteJid: string): void {
         const jid = stripDeviceSuffix(remoteJid);
         if (!jid || jid === "status@broadcast" || this.profilePictureRequests.has(jid)) {
@@ -2352,6 +2446,60 @@ class LocalWhatsAppService {
             .finally(() => {
                 setTimeout(() => {
                     this.profilePictureRequests.delete(jid);
+                }, 10 * 60 * 1000);
+            });
+    }
+
+    private queueContactProfilePictureFetch(remoteJid: string, notifyRemoteJid?: string): void {
+        const originalJid = stripDeviceSuffix(remoteJid);
+        const lookupJid = this.profilePictureLookupJid(originalJid);
+        if (
+            !lookupJid
+            || lookupJid === "status@broadcast"
+            || lookupJid.endsWith("@g.us")
+            || this.profilePictureRequests.has(lookupJid)
+            || this.profilePictureUrlForJid(originalJid)
+            || !this.socket
+            || this.snapshot.status !== "open"
+        ) {
+            return;
+        }
+
+        this.profilePictureRequests.add(lookupJid);
+        void this.socket.profilePictureUrl(lookupJid, "image")
+            .then((url) => {
+                if (!url) {
+                    return;
+                }
+
+                const existing = this.contactForJid(originalJid) ?? this.contactForJid(lookupJid);
+                const merged = this.mergeContact(existing, {
+                    id: existing?.id ?? lookupJid,
+                    imgUrl: url,
+                }, lookupJid);
+                for (const alias of this.contactAliases(merged)) {
+                    this.contacts.set(alias, merged);
+                }
+
+                const chat = this.chats.get(this.canonicalChatJid(lookupJid));
+                if (chat) {
+                    chat.profilePicUrl = url;
+                }
+
+                this.queuePersist();
+                this.hub.publish({
+                    type: "messages.update",
+                    data: {
+                        changed: true,
+                        remoteJid: notifyRemoteJid ? stripDeviceSuffix(notifyRemoteJid) : this.canonicalChatJid(lookupJid),
+                        profilePicUrl: true,
+                    },
+                });
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                setTimeout(() => {
+                    this.profilePictureRequests.delete(lookupJid);
                 }, 10 * 60 * 1000);
             });
     }

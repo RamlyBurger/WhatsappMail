@@ -707,18 +707,18 @@ button {
     z-index: 1;
 }
 
-.email-row.selected,
-.email-row.opened {
-    background: #e8f0fe;
-}
-
 .email-row.read {
-    background: #f2f6fc;
+    background: #fff;
 }
 
 .email-row.unread {
-    background: #fff;
+    background: #f2f6fc;
     font-weight: 700;
+}
+
+.email-row.selected,
+.email-row.opened {
+    background: #e8f0fe;
 }
 
 .row-actions {

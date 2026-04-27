@@ -114,8 +114,17 @@ function currentChat(): WhatsAppChatRow | null {
     return state.chats.find((chat) => chat.remoteJid === state.openChatId) ?? null;
 }
 
+function isHiddenMessage(message: WhatsAppMessage | undefined | null): boolean {
+    const type = message?.type;
+    return type === "Reaction"
+        || type === "associatedChild"
+        || type === "associatedChildMessage"
+        || type === "album"
+        || type === "albumMessage";
+}
+
 function currentMessages(): WhatsAppMessage[] {
-    return state.openChatId ? state.messagesByChat[state.openChatId] ?? [] : [];
+    return state.openChatId ? (state.messagesByChat[state.openChatId] ?? []).filter((message) => !isHiddenMessage(message)) : [];
 }
 
 function isUnread(chat: WhatsAppChatRow): boolean {
@@ -350,18 +359,20 @@ function renderChatRow(chat: WhatsAppChatRow): string {
 }
 
 function renderChatPreview(chat: WhatsAppChatRow): string {
-    const previewMessage = chat.lastActivity ?? chat.lastMessage;
+    const previewMessage = [chat.lastActivity, chat.lastMessage].find((message) => !isHiddenMessage(message));
+    const subjectText = previewMessage ? chat.subject : "";
+    const snippetText = previewMessage ? chat.snippet : "";
     const groupSenderPreview = Boolean(chat.isGroup && previewMessage);
     const mediaPreview = renderRowMediaPreview(previewMessage);
-    const senderStylePreview = groupSenderPreview || chat.subject.endsWith(":");
+    const senderStylePreview = groupSenderPreview || subjectText.endsWith(":");
     const separator = previewMessage?.activityOnly ? "" : senderStylePreview ? " " : "- ";
-    const showSubject = Boolean(chat.subject && (!mediaPreview || senderStylePreview || previewMessage?.activityOnly));
+    const showSubject = Boolean(subjectText && (!mediaPreview || senderStylePreview || previewMessage?.activityOnly));
 
     return `
         <div class="message">
             ${renderReadReceipt(previewMessage, "row-preview")}
-            ${showSubject ? `<span class="subject">${escapeHtml(chat.subject)}</span>` : ""}
-            ${mediaPreview ? `<span class="snippet media-preview-inline${showSubject ? "" : " no-prefix"}">${showSubject ? separator : ""}${mediaPreview}</span>` : chat.snippet ? `<span class="snippet">${separator}${escapeHtml(chat.snippet)}</span>` : ""}
+            ${showSubject ? `<span class="subject">${renderWhatsAppInline(subjectText)}</span>` : ""}
+            ${mediaPreview ? `<span class="snippet media-preview-inline${showSubject ? "" : " no-prefix"}">${showSubject ? separator : ""}${mediaPreview}</span>` : snippetText ? `<span class="snippet">${separator}${renderWhatsAppInline(snippetText)}</span>` : ""}
         </div>
     `;
 }
@@ -378,6 +389,14 @@ function renderRowMediaPreview(message: WhatsAppMessage | undefined): string {
 
     if (type === "sticker") {
         return `<span class="row-media-kind">${icon("sticky_note_2")}<span>Sticker</span></span>`;
+    }
+
+    if (type === "voice call") {
+        return `<span class="row-media-kind">${icon("call")}<span>Voice call</span></span>`;
+    }
+
+    if (type === "video call") {
+        return `<span class="row-media-kind">${icon("videocam")}<span>Video call</span></span>`;
     }
 
     return "";
@@ -516,13 +535,14 @@ function renderThreadPlaceholder(): string {
 
 function visibleThreadMessages(remoteJid: string, messages: WhatsAppMessage[]): WhatsAppMessage[] {
     const count = Math.max(1, threadVisibleCounts.get(remoteJid) ?? THREAD_PAGE_SIZE);
-    return messages.slice(-count);
+    return messages.filter((message) => !isHiddenMessage(message)).slice(-count);
 }
 
 function hasOlderThreadMessages(remoteJid: string, messages: WhatsAppMessage[]): boolean {
+    const visibleMessages = messages.filter((message) => !isHiddenMessage(message));
     const visibleCount = threadVisibleCounts.get(remoteJid) ?? THREAD_PAGE_SIZE;
-    const total = threadMessageTotals.get(remoteJid) ?? messages.length;
-    return visibleCount < messages.length || messages.length < total;
+    const total = threadMessageTotals.get(remoteJid) ?? visibleMessages.length;
+    return visibleCount < visibleMessages.length || visibleMessages.length < total;
 }
 
 function renderThreadInlineComposer(chat: WhatsAppChatRow): string {
@@ -559,6 +579,11 @@ function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string 
     const sender = message.fromMe ? "me" : chat.isGroup ? message.senderName || "Someone" : chat.name;
     const avatar = renderThreadAvatar(chat, message, sender);
     const text = messageTextForThread(message);
+    const recipient = message.fromMe
+        ? `to ${escapeHtml(chat.name)}`
+        : chat.isGroup
+          ? `in ${escapeHtml(chat.name)}`
+          : "to me";
 
     return `
         <article class="${classes}" data-message-id="${escapeHtml(message.id)}">
@@ -567,7 +592,7 @@ function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string 
                 <header class="message-header">
                     <div>
                         <div class="message-sender">${escapeHtml(sender)}</div>
-                        <div class="message-recipient">${message.fromMe ? `to ${escapeHtml(chat.name)}` : "to me"} ${message.participant && chat.isGroup ? `<span class="participant">via ${escapeHtml(message.participant)}</span>` : ""} ${icon("arrow_drop_down")}</div>
+                        <div class="message-recipient">${recipient} ${icon("arrow_drop_down")}</div>
                     </div>
                     <div class="message-meta">
                         <span>${escapeHtml(message.timeLabel)}</span>
@@ -694,7 +719,11 @@ function renderMessageReactions(message: WhatsAppMessage): string {
 }
 
 function renderThreadAvatar(chat: WhatsAppChatRow, message: WhatsAppMessage, sender: string): string {
-    const url = message.fromMe ? state.connection?.profilePictureUrl : chat.isGroup ? "" : chat.profilePicUrl;
+    const url = message.fromMe
+        ? state.connection?.profilePictureUrl
+        : chat.isGroup
+          ? message.senderProfilePicUrl
+          : chat.profilePicUrl;
     if (url) {
         return `<div class="thread-avatar photo-avatar" style="background-image:url('${escapeHtml(url)}')"></div>`;
     }
@@ -729,7 +758,156 @@ function renderMessageText(text: string): string {
         return "";
     }
 
-    return escapeHtml(text).split(/\n+/).map((line) => `<p>${line || "&nbsp;"}</p>`).join("");
+    return renderWhatsAppBlocks(text);
+}
+
+function renderWhatsAppBlocks(text: string): string {
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    const blocks: string[] = [];
+    let index = 0;
+
+    while (index < lines.length) {
+        const line = lines[index] ?? "";
+        if (isCodeFence(line)) {
+            const result = collectCodeBlock(lines, index);
+            blocks.push(`<pre class="wa-code-block"><code>${escapeHtml(result.text)}</code></pre>`);
+            index = result.nextIndex;
+            continue;
+        }
+
+        if (isQuoteLine(line)) {
+            const quoteLines: string[] = [];
+            while (index < lines.length && isQuoteLine(lines[index] ?? "")) {
+                quoteLines.push((lines[index] ?? "").replace(/^\s*>\s?/, ""));
+                index += 1;
+            }
+            blocks.push(`<blockquote class="wa-quote">${quoteLines.map((item) => `<p>${renderWhatsAppInline(item) || "&nbsp;"}</p>`).join("")}</blockquote>`);
+            continue;
+        }
+
+        if (isBulletLine(line)) {
+            const items: string[] = [];
+            while (index < lines.length && isBulletLine(lines[index] ?? "")) {
+                items.push((lines[index] ?? "").replace(/^\s*[*-]\s+/, ""));
+                index += 1;
+            }
+            blocks.push(`<ul class="wa-list">${items.map((item) => `<li>${renderWhatsAppInline(item) || "&nbsp;"}</li>`).join("")}</ul>`);
+            continue;
+        }
+
+        if (isNumberedLine(line)) {
+            const items: string[] = [];
+            const start = Number(line.match(/^\s*(\d+)\.\s+/)?.[1] ?? 1);
+            while (index < lines.length && isNumberedLine(lines[index] ?? "")) {
+                items.push((lines[index] ?? "").replace(/^\s*\d+\.\s+/, ""));
+                index += 1;
+            }
+            blocks.push(`<ol class="wa-list" start="${start}">${items.map((item) => `<li>${renderWhatsAppInline(item) || "&nbsp;"}</li>`).join("")}</ol>`);
+            continue;
+        }
+
+        blocks.push(`<p>${renderWhatsAppInline(line) || "&nbsp;"}</p>`);
+        index += 1;
+    }
+
+    return blocks.join("");
+}
+
+function renderWhatsAppInline(text: string): string {
+    const tokens = tokenizeInlineCode(text);
+    return tokens.map((token) => {
+        if (token.kind === "code") {
+            return `<code class="wa-inline-code">${escapeHtml(token.value)}</code>`;
+        }
+
+        return renderWhatsAppInlineFormatting(token.value);
+    }).join("");
+}
+
+function renderWhatsAppInlineFormatting(text: string): string {
+    return escapeHtml(text)
+        .replace(/\*(?=\S)([^*\n]*?\S)\*/g, "<strong>$1</strong>")
+        .replace(/_(?=\S)([^_\n]*?\S)_/g, "<em>$1</em>")
+        .replace(/~(?=\S)([^~\n]*?\S)~/g, "<s>$1</s>");
+}
+
+function tokenizeInlineCode(text: string): Array<{ kind: "text" | "code"; value: string }> {
+    const tokens: Array<{ kind: "text" | "code"; value: string }> = [];
+    let index = 0;
+
+    while (index < text.length) {
+        const fence = text.startsWith("```", index) ? "```" : text[index] === "`" ? "`" : "";
+        if (!fence) {
+            const nextSingle = text.indexOf("`", index);
+            const nextIndex = nextSingle === -1 ? text.length : nextSingle;
+            tokens.push({ kind: "text", value: text.slice(index, nextIndex) });
+            index = nextIndex;
+            continue;
+        }
+
+        const closeIndex = text.indexOf(fence, index + fence.length);
+        if (closeIndex === -1) {
+            tokens.push({ kind: "text", value: text.slice(index) });
+            break;
+        }
+
+        if (closeIndex > index) {
+            tokens.push({ kind: "code", value: text.slice(index + fence.length, closeIndex) });
+        }
+        index = closeIndex + fence.length;
+    }
+
+    return tokens;
+}
+
+function isCodeFence(line: string): boolean {
+    return line.trimStart().startsWith("```");
+}
+
+function collectCodeBlock(lines: string[], startIndex: number): { text: string; nextIndex: number } {
+    const firstLine = lines[startIndex] ?? "";
+    const openIndex = firstLine.indexOf("```");
+    const firstContent = firstLine.slice(openIndex + 3);
+    const sameLineClose = firstContent.indexOf("```");
+    if (sameLineClose >= 0) {
+        return {
+            text: firstContent.slice(0, sameLineClose),
+            nextIndex: startIndex + 1,
+        };
+    }
+
+    const content = firstContent ? [firstContent] : [];
+    let index = startIndex + 1;
+    while (index < lines.length) {
+        const closeIndex = (lines[index] ?? "").indexOf("```");
+        if (closeIndex >= 0) {
+            content.push((lines[index] ?? "").slice(0, closeIndex));
+            return {
+                text: content.join("\n"),
+                nextIndex: index + 1,
+            };
+        }
+
+        content.push(lines[index] ?? "");
+        index += 1;
+    }
+
+    return {
+        text: content.join("\n"),
+        nextIndex: lines.length,
+    };
+}
+
+function isQuoteLine(line: string): boolean {
+    return /^\s*>\s?/.test(line);
+}
+
+function isBulletLine(line: string): boolean {
+    return /^\s*[*-]\s+\S/.test(line);
+}
+
+function isNumberedLine(line: string): boolean {
+    return /^\s*\d+\.\s+\S/.test(line);
 }
 
 function renderMessageMedia(message: WhatsAppMessage): string {
@@ -1096,7 +1274,10 @@ function restoreClientCache(): void {
             state.loadingChats = false;
         }
         if (cache.messagesByChat && typeof cache.messagesByChat === "object" && !Array.isArray(cache.messagesByChat)) {
-            state.messagesByChat = cache.messagesByChat as Record<string, WhatsAppMessage[]>;
+            state.messagesByChat = Object.fromEntries(
+                Object.entries(cache.messagesByChat as Record<string, WhatsAppMessage[]>)
+                    .map(([remoteJid, messages]) => [remoteJid, Array.isArray(messages) ? messages.filter((message) => !isHiddenMessage(message)) : []]),
+            );
         }
         state.starredIds = new Set(Array.isArray(cache.starredIds) ? cache.starredIds : []);
         state.localReadIds = new Set(Array.isArray(cache.localReadIds) ? cache.localReadIds : []);
@@ -1111,7 +1292,7 @@ function saveClientCache(): void {
         const cache: ClientCache = {
             chats: state.chats.slice(0, 200),
             messagesByChat: Object.fromEntries(
-                Object.entries(state.messagesByChat).map(([remoteJid, messages]) => [remoteJid, messages.slice(-200)]),
+                Object.entries(state.messagesByChat).map(([remoteJid, messages]) => [remoteJid, messages.filter((message) => !isHiddenMessage(message)).slice(-200)]),
             ),
             starredIds: [...state.starredIds],
             localReadIds: [...state.localReadIds],
@@ -1272,6 +1453,10 @@ async function loadOlderThreadMessages(scroller: HTMLElement): Promise<void> {
 function mergeMessages(existing: WhatsAppMessage[], incoming: WhatsAppMessage[]): WhatsAppMessage[] {
     const merged = new Map<string, WhatsAppMessage>();
     for (const message of [...existing, ...incoming]) {
+        if (isHiddenMessage(message)) {
+            continue;
+        }
+
         merged.set(message.id, message);
     }
 
@@ -1279,7 +1464,7 @@ function mergeMessages(existing: WhatsAppMessage[], incoming: WhatsAppMessage[])
 }
 
 function sortMessages(messages: WhatsAppMessage[]): WhatsAppMessage[] {
-    return [...messages].sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+    return messages.filter((message) => !isHiddenMessage(message)).sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
 }
 
 function scheduleBackgroundSync(options: { reloadOpenMessages?: boolean; scrollToBottom?: boolean } = {}): void {
@@ -1583,6 +1768,10 @@ function makeOptimisticMessage(remoteJid: string, text: string): WhatsAppMessage
 }
 
 function addMessage(message: WhatsAppMessage): void {
+    if (isHiddenMessage(message)) {
+        return;
+    }
+
     const current = state.messagesByChat[message.remoteJid] ?? [];
     state.messagesByChat[message.remoteJid] = sortMessages([...current, message]);
     threadMessageTotals.set(message.remoteJid, Math.max(threadMessageTotals.get(message.remoteJid) ?? 0, state.messagesByChat[message.remoteJid].length));
@@ -1594,6 +1783,10 @@ function addMessage(message: WhatsAppMessage): void {
 }
 
 function replaceMessage(tempId: string, message: WhatsAppMessage): void {
+    if (isHiddenMessage(message)) {
+        return;
+    }
+
     const current = state.messagesByChat[message.remoteJid] ?? [];
     state.messagesByChat[message.remoteJid] = sortMessages(current.map((item) => item.id === tempId ? message : item));
     upsertChatFromMessage(message);
@@ -1606,6 +1799,10 @@ function removeMessage(messageId: string, remoteJid: string): void {
 }
 
 function upsertChatFromMessage(message: WhatsAppMessage): void {
+    if (isHiddenMessage(message)) {
+        return;
+    }
+
     const existing = state.chats.find((chat) => chat.remoteJid === message.remoteJid);
     if (existing) {
         const previousSortTimestamp = existing.sortTimestamp ?? existing.lastMessage?.timestamp ?? existing.timestamp;
