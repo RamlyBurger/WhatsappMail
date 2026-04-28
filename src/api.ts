@@ -101,12 +101,15 @@ export function sendText(remoteJid: string, text: string, quoted?: unknown): Pro
     return request<SendMessageResponse>("/api/messages/text", jsonInit({ remoteJid, text, quoted }));
 }
 
-export function sendMedia(remoteJid: string, file: File, caption = ""): Promise<SendMessageResponse> {
+export function sendMedia(remoteJid: string, file: File, caption = "", quoted?: unknown): Promise<SendMessageResponse> {
     const form = new FormData();
     form.set("remoteJid", remoteJid);
     form.set("caption", caption);
     form.set("fileName", file.name);
     form.set("mediatype", mediaTypeFromFile(file));
+    if (quoted) {
+        form.set("quoted", JSON.stringify(quoted));
+    }
     form.set("file", file);
 
     return request<SendMessageResponse>("/api/messages/media", {
@@ -151,16 +154,33 @@ export function subscribeEvents(onEvent: (payload: ServerEventPayload) => void, 
     return source;
 }
 
-function mediaTypeFromFile(file: File): "image" | "video" | "audio" | "document" {
-    if (file.type.startsWith("image/")) {
+type OutgoingMediaType = "image" | "video" | "audio" | "document";
+
+function mediaTypeFromFile(file: File): OutgoingMediaType {
+    const mime = file.type.toLowerCase();
+    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+
+    if (mime.startsWith("image/")) {
         return "image";
     }
 
-    if (file.type.startsWith("video/")) {
+    if (mime.startsWith("video/")) {
         return "video";
     }
 
-    if (file.type.startsWith("audio/")) {
+    if (mime.startsWith("audio/")) {
+        return "audio";
+    }
+
+    if (["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif"].includes(extension)) {
+        return "image";
+    }
+
+    if (["mp4", "m4v", "mov", "webm", "mkv", "avi", "3gp", "3g2", "mpeg", "mpg"].includes(extension)) {
+        return "video";
+    }
+
+    if (["mp3", "m4a", "aac", "ogg", "oga", "opus", "wav", "flac", "amr"].includes(extension)) {
         return "audio";
     }
 

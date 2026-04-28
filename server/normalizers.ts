@@ -43,6 +43,17 @@ export interface WhatsAppReaction {
     timestamp?: number;
 }
 
+export interface WhatsAppQuotedMessage {
+    id?: string;
+    remoteJid?: string;
+    participant?: string;
+    fromMe?: boolean;
+    senderName?: string;
+    type: string;
+    text: string;
+    media?: WhatsAppMediaPreview;
+}
+
 export interface NormalizedMessage {
     id: string;
     remoteJid: string;
@@ -58,6 +69,7 @@ export interface NormalizedMessage {
     key: WhatsAppMessageKey;
     senderProfilePicUrl?: string;
     media?: WhatsAppMediaPreview;
+    quoted?: WhatsAppQuotedMessage;
     reactions?: WhatsAppReaction[];
     forwarded?: boolean;
     forwardingScore?: number;
@@ -210,6 +222,14 @@ export function formatTimeLabel(timestamp: number): string {
             hour: "numeric",
             minute: "2-digit",
         }).format(date);
+    }
+
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(todayStart.getDate() - 1);
+
+    if (date >= yesterdayStart && date < todayStart) {
+        return "Yesterday";
     }
 
     const sameYear = date.getFullYear() === now.getFullYear();
@@ -378,6 +398,50 @@ function extractForwardInfo(content: UnknownRecord): Pick<NormalizedMessage, "fo
             ...(forwardingScore ? { forwardingScore } : {}),
         }
         : {};
+}
+
+function extractQuotedMessage(content: UnknownRecord, ownerJid = "", fallbackRemoteJid = ""): WhatsAppQuotedMessage | undefined {
+    const context = asRecord(content.contextInfo);
+    const quotedMessage = asRecord(context.quotedMessage);
+    if (!Object.keys(quotedMessage).length) {
+        return undefined;
+    }
+
+    const normalizedQuoted = normalizeMessageContent(quotedMessage as MessageContent) as MessageContent | undefined;
+    const quotedType = getContentType(normalizedQuoted);
+    if (!quotedType || isInternalMessageContentType(quotedType)) {
+        return undefined;
+    }
+
+    const quotedContent = contentRecord(normalizedQuoted?.[quotedType as keyof MessageContent]);
+    const extracted = extractMessageText(quotedType, quotedContent);
+    const remoteJid = stripDeviceSuffix(
+        optionalString(context.remoteJid)
+            ?? optionalString(context.chat)
+            ?? fallbackRemoteJid,
+    );
+    const participant = stripDeviceSuffix(optionalString(context.participant) ?? "");
+    const normalizedOwner = stripDeviceSuffix(ownerJid);
+    const fromMe = Boolean(normalizedOwner && participant && participant === normalizedOwner);
+    const senderName = fromMe
+        ? "me"
+        : participant
+          ? jidToDisplayName(participant)
+          : remoteJid
+            ? jidToDisplayName(remoteJid)
+            : "Someone";
+    const text = extracted.text || extracted.subject || "Message";
+
+    return {
+        ...(optionalString(context.stanzaId) ? { id: optionalString(context.stanzaId) } : {}),
+        ...(remoteJid ? { remoteJid } : {}),
+        ...(participant ? { participant } : {}),
+        ...(fromMe ? { fromMe } : {}),
+        senderName,
+        type: extracted.subject,
+        text,
+        ...(extracted.media ? { media: extracted.media } : {}),
+    };
 }
 
 export function normalizeMessageReaction(reaction: proto.IReaction, ownerJid = "", remoteJid = ""): WhatsAppReaction | null {
@@ -750,6 +814,7 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
     const content = contentRecord(normalizedContent?.[contentType as keyof MessageContent]);
     const extracted = extractMessageText(contentType, content);
     const forwardInfo = extractForwardInfo(content);
+    const quoted = extractQuotedMessage(content, ownerJid, remoteJid);
     const timestamp = timestampSeconds(raw.messageTimestamp);
     const participantFromEnvelope = optionalString(asRecord(raw).participant);
     const participant = raw.key.participant
@@ -781,6 +846,7 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
             participant,
         },
         media: extracted.media,
+        quoted,
         reactions: normalizeMessageReactions(asRecord(raw).reactions, ownerJid, remoteJid),
         ...forwardInfo,
         raw,
@@ -789,15 +855,19 @@ export function normalizeWAMessage(raw: WAMessage, ownerJid = ""): NormalizedMes
 
 export function createMetadataActivityMessage(chat: LocalChatProjection): NormalizedMessage | undefined {
     const remoteJid = stripDeviceSuffix(chat.remoteJid);
+    const isGroup = remoteJid.endsWith("@g.us");
+    if (!isGroup) {
+        return undefined;
+    }
+
     const metadataTimestamp = chat.metadataTimestamp ?? 0;
     const lastTimestamp = Math.max(chat.lastMessage?.timestamp ?? 0, chat.lastActivity?.timestamp ?? 0);
     if (!remoteJid || metadataTimestamp <= lastTimestamp) {
         return undefined;
     }
 
-    const isGroup = remoteJid.endsWith("@g.us");
-    const type = isGroup ? "Recent activity" : "Voice call";
-    const senderName = isGroup ? "Someone" : chat.name || jidToDisplayName(remoteJid);
+    const type = "Recent activity";
+    const senderName = "Someone";
 
     return {
         id: `activity:${remoteJid}:${metadataTimestamp}`,
@@ -814,7 +884,7 @@ export function createMetadataActivityMessage(chat: LocalChatProjection): Normal
             fromMe: false,
         },
         activityOnly: true,
-        bumpChat: !isGroup,
+        bumpChat: false,
     };
 }
 

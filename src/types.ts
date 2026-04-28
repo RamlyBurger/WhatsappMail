@@ -39,6 +39,17 @@ export interface WhatsAppReaction {
     timestamp?: number;
 }
 
+export interface WhatsAppQuotedMessage {
+    id?: string;
+    remoteJid?: string;
+    participant?: string;
+    fromMe?: boolean;
+    senderName?: string;
+    type: string;
+    text: string;
+    media?: WhatsAppMediaPreview;
+}
+
 export interface WhatsAppMessage {
     id: string;
     remoteJid: string;
@@ -54,6 +65,7 @@ export interface WhatsAppMessage {
     key: WhatsAppMessageKey;
     senderProfilePicUrl?: string;
     media?: WhatsAppMediaPreview;
+    quoted?: WhatsAppQuotedMessage;
     reactions?: WhatsAppReaction[];
     forwarded?: boolean;
     forwardingScore?: number;

@@ -32,10 +32,12 @@ let toastTimer: number | undefined;
 let events: EventSource | null = null;
 let pendingThreadScrollBottom = false;
 let pendingThreadScrollRestore: { chatId: string; previousScrollHeight: number; previousScrollTop: number } | null = null;
+let pendingThreadScrollKeep: { chatId: string; bottomOffset: number; previousScrollTop: number } | null = null;
 let suppressThreadTopLoadUntil = 0;
 let renderQueued = false;
 let searchRenderTimer: number | undefined;
 let searchFocus: { start: number | null; end: number | null } | null = null;
+let inlineFocus: { chatId: string; atEnd: boolean } | null = null;
 let backgroundSyncTimer: number | undefined;
 let backgroundSyncNeedsMessages = false;
 let backgroundSyncScrollToBottom = false;
@@ -46,6 +48,8 @@ const threadMessagePages = new Map<string, number>();
 const threadMessageTotals = new Map<string, number>();
 const loadingOlderThreadIds = new Set<string>();
 const inlineReplyDrafts = new Map<string, string>();
+const inlineAttachments = new Map<string, InlineAttachment>();
+const inlineQuotedMessages = new Map<string, WhatsAppMessage>();
 
 if (!appRoot) {
     throw new Error("Missing #app root");
@@ -91,6 +95,11 @@ interface ClientCache {
 interface LoadOptions {
     showLoading?: boolean;
     scrollToBottom?: boolean;
+}
+
+interface InlineAttachment {
+    file: File;
+    previewUrl: string;
 }
 
 function icon(name: string, fill = false): string {
@@ -366,12 +375,13 @@ function renderChatPreview(chat: WhatsAppChatRow): string {
     const mediaPreview = renderRowMediaPreview(previewMessage);
     const senderStylePreview = groupSenderPreview || subjectText.endsWith(":");
     const separator = previewMessage?.activityOnly ? "" : senderStylePreview ? " " : "- ";
-    const showSubject = Boolean(subjectText && (!mediaPreview || senderStylePreview || previewMessage?.activityOnly));
+    const showSubject = Boolean(subjectText && (!mediaPreview || senderStylePreview || (previewMessage?.activityOnly && !mediaPreview)));
+    const subjectClass = `subject${senderStylePreview ? " prefix-subject" : ""}`;
 
     return `
         <div class="message">
             ${renderReadReceipt(previewMessage, "row-preview")}
-            ${showSubject ? `<span class="subject">${renderWhatsAppInline(subjectText)}</span>` : ""}
+            ${showSubject ? `<span class="${subjectClass}">${renderWhatsAppInline(subjectText)}</span>` : ""}
             ${mediaPreview ? `<span class="snippet media-preview-inline${showSubject ? "" : " no-prefix"}">${showSubject ? separator : ""}${mediaPreview}</span>` : snippetText ? `<span class="snippet">${separator}${renderWhatsAppInline(snippetText)}</span>` : ""}
         </div>
     `;
@@ -547,11 +557,14 @@ function hasOlderThreadMessages(remoteJid: string, messages: WhatsAppMessage[]):
 
 function renderThreadInlineComposer(chat: WhatsAppChatRow): string {
     const draft = inlineReplyDrafts.get(chat.remoteJid) ?? "";
+    const attachment = inlineAttachments.get(chat.remoteJid);
+    const quoted = inlineQuotedMessages.get(chat.remoteJid);
 
     return `
         <form class="thread-inline-compose" data-inline-compose data-chat-id="${escapeHtml(chat.remoteJid)}">
-            <div class="thread-inline-avatar">${messageAvatarInitial("me")}</div>
             <div class="thread-inline-box">
+                ${quoted ? renderInlineQuotedMessage(quoted) : ""}
+                ${attachment ? renderInlineAttachment(attachment) : ""}
                 <div class="thread-inline-body" contenteditable="true" role="textbox" aria-label="Reply to ${escapeHtml(chat.name)}" data-inline-body data-placeholder="Reply to ${escapeHtml(chat.name)}">${escapeHtml(draft)}</div>
                 <div class="thread-inline-toolbar">
                     <button class="send-button inline-send" data-action="send-inline-reply" type="button">Send</button>
@@ -566,6 +579,88 @@ function renderThreadInlineComposer(chat: WhatsAppChatRow): string {
             </div>
         </form>
     `;
+}
+
+function renderInlineQuotedMessage(message: WhatsAppMessage): string {
+    const quoted = quotedPreviewFromMessage(message);
+    const media = quoted.media ? renderQuotedMediaLabel(quoted.media.kind) : "";
+    const text = quoted.text && !isGenericQuotedText(quoted.text)
+        ? quoted.text
+        : quoted.media?.caption || quoted.type || "Message";
+
+    return `
+        <div class="thread-inline-quote">
+            <div class="thread-inline-quote-content">
+                <div class="quoted-sender">${escapeHtml(quoted.senderName || "Someone")}</div>
+                <div class="quoted-preview">
+                    ${media}
+                    <span>${renderWhatsAppInline(text)}</span>
+                </div>
+            </div>
+            <button class="icon-button thread-inline-remove" type="button" aria-label="Remove quoted message" data-action="remove-inline-quote">${icon("close")}</button>
+        </div>
+    `;
+}
+
+function renderInlineAttachment(attachment: InlineAttachment): string {
+    const kind = mediaKindFromFile(attachment.file);
+
+    if (kind === "image" || kind === "video") {
+        const preview = kind === "image"
+            ? `<img src="${escapeHtml(attachment.previewUrl)}" alt="${escapeHtml(attachment.file.name || "Pasted image")}">`
+            : `<video src="${escapeHtml(attachment.previewUrl)}" controls muted preload="metadata"></video>`;
+
+        return `
+            <div class="thread-inline-attachment ${kind}-attachment" data-inline-attachment>
+                <div class="thread-inline-attachment-preview">
+                    ${preview}
+                </div>
+                <button class="icon-button thread-inline-remove" type="button" aria-label="Remove attachment" data-action="remove-inline-attachment">${icon("close")}</button>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="thread-inline-attachment file-attachment" data-inline-attachment>
+            <div class="thread-inline-attachment-preview">${icon("description")}</div>
+            <div class="thread-inline-attachment-meta">
+                <span>${escapeHtml(attachment.file.name || "Pasted image")}</span>
+                <small>${escapeHtml(formatFileSize(attachment.file.size))}</small>
+            </div>
+            <button class="icon-button thread-inline-remove" type="button" aria-label="Remove attachment" data-action="remove-inline-attachment">${icon("close")}</button>
+        </div>
+    `;
+}
+
+function formatFileSize(bytes: number): string {
+    if (bytes < 1024) {
+        return `${bytes} B`;
+    }
+
+    if (bytes < 1024 * 1024) {
+        return `${Math.round(bytes / 1024)} KB`;
+    }
+
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function mediaKindFromFile(file: File): "image" | "video" | "audio" | "document" {
+    const mime = file.type.toLowerCase();
+    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+
+    if (mime.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif"].includes(extension)) {
+        return "image";
+    }
+
+    if (mime.startsWith("video/") || ["mp4", "m4v", "mov", "webm", "mkv", "avi", "3gp", "3g2", "mpeg", "mpg"].includes(extension)) {
+        return "video";
+    }
+
+    if (mime.startsWith("audio/") || ["mp3", "m4a", "aac", "ogg", "oga", "opus", "wav", "flac", "amr"].includes(extension)) {
+        return "audio";
+    }
+
+    return "document";
 }
 
 function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string {
@@ -598,12 +693,13 @@ function renderMessage(chat: WhatsAppChatRow, message: WhatsAppMessage): string 
                         <span>${escapeHtml(message.timeLabel)}</span>
                         ${renderReadReceipt(message, "thread")}
                         <button class="icon-button tiny-icon" aria-label="Star">${icon("star")}</button>
-                        <button class="icon-button tiny-icon" aria-label="Reply" data-action="open-compose" data-compose-mode="reply">${icon("reply")}</button>
+                        <button class="icon-button tiny-icon" aria-label="Reply" data-action="quote-message" data-message-id="${escapeHtml(message.id)}">${icon("reply")}</button>
                         <button class="icon-button tiny-icon" aria-label="React" data-action="react-message" data-message-id="${escapeHtml(message.id)}">${icon("sentiment_satisfied")}</button>
                     </div>
                 </header>
                 <div class="message-body">
                     ${renderForwardedLabel(message)}
+                    ${renderQuotedMessage(message)}
                     ${renderMessageMedia(message)}
                     ${renderMessageText(text)}
                     ${renderMessageReactions(message)}
@@ -684,21 +780,90 @@ function renderForwardedLabel(message: WhatsAppMessage): string {
     return `<div class="forwarded-label">${icon("forward")}<span>${escapeHtml(label)}</span></div>`;
 }
 
+function renderQuotedMessage(message: WhatsAppMessage): string {
+    if (!message.quoted) {
+        return "";
+    }
+
+    const quoted = message.quoted;
+    const sender = quoted.fromMe ? "me" : quoted.senderName || "Someone";
+    const media = quoted.media ? renderQuotedMediaLabel(quoted.media.kind) : "";
+    const text = quoted.text && !isGenericQuotedText(quoted.text)
+        ? quoted.text
+        : quoted.media?.caption || quoted.type || "Message";
+
+    return `
+        <div class="quoted-message" ${quoted.id ? `data-quoted-id="${escapeHtml(quoted.id)}"` : ""}>
+            <div class="quoted-sender">${escapeHtml(sender)}</div>
+            <div class="quoted-preview">
+                ${media}
+                <span>${renderWhatsAppInline(text)}</span>
+            </div>
+        </div>
+    `;
+}
+
+function quotedPreviewFromMessage(message: WhatsAppMessage): NonNullable<WhatsAppMessage["quoted"]> {
+    return {
+        id: message.id,
+        remoteJid: message.remoteJid,
+        fromMe: message.fromMe,
+        ...(message.participant ? { participant: message.participant } : {}),
+        senderName: message.fromMe ? "me" : message.senderName || "Someone",
+        type: message.type,
+        text: messageTextForThread(message) || message.text || message.type,
+        ...(message.media ? { media: message.media } : {}),
+    };
+}
+
+function renderQuotedMediaLabel(kind: string): string {
+    return `<span class="quoted-media-kind">${icon(mediaIcon(kind))}<span>${escapeHtml(mediaLabel(kind))}</span></span>`;
+}
+
+function mediaLabel(kind: string): string {
+    switch (kind) {
+        case "image":
+            return "Image";
+        case "video":
+            return "Video";
+        case "audio":
+            return "Audio";
+        case "sticker":
+            return "Sticker";
+        case "document":
+            return "Document";
+        default:
+            return "Attachment";
+    }
+}
+
+function isGenericQuotedText(text: string): boolean {
+    return new Set([
+        "Image message",
+        "Video message",
+        "Audio message",
+        "Voice message",
+        "Document message",
+        "Sticker",
+    ]).has(text);
+}
+
 function renderMessageReactions(message: WhatsAppMessage): string {
     if (!message.reactions?.length) {
         return "";
     }
 
-    const totals = new Map<string, { count: number; names: string[] }>();
+    const totals = new Map<string, { count: number; names: string[]; fromMe: boolean }>();
     for (const reaction of message.reactions) {
         const text = reaction.text.trim();
         if (!text) {
             continue;
         }
 
-        const current = totals.get(text) ?? { count: 0, names: [] };
+        const current = totals.get(text) ?? { count: 0, names: [], fromMe: false };
         current.count += 1;
         current.names.push(reaction.fromMe ? "me" : reaction.senderName || "Someone");
+        current.fromMe = current.fromMe || Boolean(reaction.fromMe);
         totals.set(text, current);
     }
 
@@ -709,9 +874,10 @@ function renderMessageReactions(message: WhatsAppMessage): string {
     return `
         <div class="message-reactions" aria-label="Message reactions">
             ${[...totals.entries()].map(([text, detail]) => `
-                <span class="reaction-chip" title="${escapeHtml(detail.names.join(", "))}">
+                <span class="reaction-chip${detail.fromMe ? " own-reaction" : ""}" title="${escapeHtml(detail.names.join(", "))}">
                     <span>${escapeHtml(text)}</span>
                     ${detail.count > 1 ? `<strong>${detail.count}</strong>` : ""}
+                    ${detail.fromMe ? `<button class="reaction-remove" type="button" aria-label="Remove reaction" data-action="remove-own-reaction" data-message-id="${escapeHtml(message.id)}">${icon("close")}</button>` : ""}
                 </span>
             `).join("")}
         </div>
@@ -1196,16 +1362,47 @@ function renderShell(): string {
 }
 
 function render(): void {
+    captureInlineComposerFocus();
     if (renderQueued) {
         return;
     }
 
+    captureThreadScrollBeforeRender();
     renderQueued = true;
     window.requestAnimationFrame(() => {
         renderQueued = false;
         app.innerHTML = renderShell();
         afterRender();
     });
+}
+
+function captureInlineComposerFocus(): void {
+    const target = document.activeElement as HTMLElement | null;
+    if (!state.openChatId || !target?.matches("[data-inline-body]")) {
+        return;
+    }
+
+    inlineFocus = {
+        chatId: state.openChatId,
+        atEnd: isSelectionAtEnd(target),
+    };
+}
+
+function captureThreadScrollBeforeRender(): void {
+    if (!state.openChatId || pendingThreadScrollBottom || pendingThreadScrollRestore || pendingThreadScrollKeep) {
+        return;
+    }
+
+    const scroller = app.querySelector<HTMLElement>(".thread-message-scroll");
+    if (!scroller) {
+        return;
+    }
+
+    pendingThreadScrollKeep = {
+        chatId: state.openChatId,
+        bottomOffset: Math.max(0, scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight),
+        previousScrollTop: scroller.scrollTop,
+    };
 }
 
 function afterRender(): void {
@@ -1224,27 +1421,119 @@ function afterRender(): void {
     if (pendingThreadScrollRestore) {
         const restore = pendingThreadScrollRestore;
         pendingThreadScrollRestore = null;
-        window.requestAnimationFrame(() => {
-            const scroller = app.querySelector<HTMLElement>(".thread-message-scroll");
-            if (scroller && state.openChatId === restore.chatId) {
-                scroller.scrollTop = scroller.scrollHeight - restore.previousScrollHeight + restore.previousScrollTop;
-            }
-        });
+        pendingThreadScrollKeep = null;
+        const scroller = app.querySelector<HTMLElement>(".thread-message-scroll");
+        if (scroller && state.openChatId === restore.chatId) {
+            scroller.scrollTop = scroller.scrollHeight - restore.previousScrollHeight + restore.previousScrollTop;
+        }
+        restoreInlineComposerFocus();
     }
 
     if (pendingThreadScrollBottom) {
         pendingThreadScrollBottom = false;
+        pendingThreadScrollKeep = null;
         suppressThreadTopLoadUntil = Date.now() + 1400;
-        window.requestAnimationFrame(() => {
-            const scroller = app.querySelector<HTMLElement>(".thread-message-scroll");
-            if (scroller) {
-                scroller.scrollTop = scroller.scrollHeight;
-                window.requestAnimationFrame(() => {
-                    scroller.scrollTop = scroller.scrollHeight;
-                });
-            }
-        });
+        const scroller = app.querySelector<HTMLElement>(".thread-message-scroll");
+        if (scroller) {
+            scrollThreadToBottom(scroller);
+        }
+        restoreInlineComposerFocus();
+        return;
     }
+
+    if (pendingThreadScrollKeep) {
+        const keep = pendingThreadScrollKeep;
+        pendingThreadScrollKeep = null;
+        const scroller = app.querySelector<HTMLElement>(".thread-message-scroll");
+        if (scroller && state.openChatId === keep.chatId) {
+            const target = Math.max(0, scroller.scrollHeight - scroller.clientHeight - keep.bottomOffset);
+            scroller.scrollTop = keep.bottomOffset <= 4 ? scroller.scrollHeight : Math.max(target, keep.previousScrollTop);
+        }
+    }
+
+    restoreInlineComposerFocus();
+}
+
+function focusInlineComposer(chatId: string, atEnd = true): void {
+    inlineFocus = { chatId, atEnd };
+}
+
+function restoreInlineComposerFocus(): void {
+    if (!inlineFocus || state.openChatId !== inlineFocus.chatId) {
+        inlineFocus = null;
+        return;
+    }
+
+    const focus = inlineFocus;
+    inlineFocus = null;
+    const body = app.querySelector<HTMLElement>("[data-inline-body]");
+    if (!body || document.activeElement === body) {
+        return;
+    }
+
+    body.focus();
+    if (focus.atEnd) {
+        moveCaretToEnd(body);
+    }
+}
+
+function isSelectionAtEnd(element: HTMLElement): boolean {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !selection.anchorNode || !element.contains(selection.anchorNode)) {
+        return true;
+    }
+
+    const range = selection.getRangeAt(0);
+    const trailing = range.cloneRange();
+    trailing.selectNodeContents(element);
+    trailing.setStart(range.endContainer, range.endOffset);
+    return trailing.toString().length === 0;
+}
+
+function moveCaretToEnd(element: HTMLElement): void {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+
+    const selection = window.getSelection();
+    if (!selection) {
+        return;
+    }
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+
+function selectInlineComposerText(element: HTMLElement): void {
+    element.focus();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+
+    const selection = window.getSelection();
+    if (!selection) {
+        return;
+    }
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+
+function scrollThreadToBottom(scroller: HTMLElement): void {
+    scroller.scrollTop = scroller.scrollHeight;
+    window.requestAnimationFrame(() => {
+        scroller.scrollTop = scroller.scrollHeight;
+    });
+
+    window.setTimeout(() => {
+        if (state.openChatId && app.contains(scroller)) {
+            scroller.scrollTop = scroller.scrollHeight;
+        }
+    }, 80);
+    window.setTimeout(() => {
+        if (state.openChatId && app.contains(scroller)) {
+            scroller.scrollTop = scroller.scrollHeight;
+        }
+    }, 260);
 }
 
 function showToast(message: string): void {
@@ -1585,14 +1874,12 @@ async function openChat(remoteJid: string): Promise<void> {
     pendingThreadScrollBottom = true;
     suppressThreadTopLoadUntil = Date.now() + 1400;
     history.replaceState(null, "", "#open-chat");
+    saveClientCache();
     render();
-    await Promise.allSettled([
-        loadMessages(remoteJid, {
-            showLoading: !(state.messagesByChat[remoteJid]?.length),
-            scrollToBottom: true,
-        }),
-        markChatRead(remoteJid, currentChat()?.lastMessage?.key),
-    ]);
+    await loadMessages(remoteJid, {
+        showLoading: !(state.messagesByChat[remoteJid]?.length),
+        scrollToBottom: true,
+    });
 }
 
 function closeChat(): void {
@@ -1668,29 +1955,152 @@ async function sendCompose(target: HTMLElement): Promise<void> {
     }
 }
 
+function setInlineAttachment(remoteJid: string, file: File): void {
+    clearInlineAttachment(remoteJid);
+    inlineAttachments.set(remoteJid, {
+        file,
+        previewUrl: URL.createObjectURL(file),
+    });
+    pendingThreadScrollBottom = true;
+    render();
+}
+
+function clearInlineAttachment(remoteJid: string): void {
+    const current = inlineAttachments.get(remoteJid);
+    if (current) {
+        URL.revokeObjectURL(current.previewUrl);
+        inlineAttachments.delete(remoteJid);
+    }
+}
+
+function clearInlineComposer(remoteJid: string, bodyElement?: HTMLElement | null): void {
+    inlineReplyDrafts.delete(remoteJid);
+    clearInlineAttachment(remoteJid);
+    inlineQuotedMessages.delete(remoteJid);
+    if (bodyElement) {
+        bodyElement.innerText = "";
+    }
+}
+
+function pastedImageFile(data: DataTransfer | null): File | null {
+    if (!data) {
+        return null;
+    }
+
+    for (const item of [...data.items]) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+            const file = item.getAsFile();
+            if (file) {
+                return namedClipboardFile(file);
+            }
+        }
+    }
+
+    const file = [...data.files].find((candidate) => candidate.type.startsWith("image/"));
+    if (file) {
+        return namedClipboardFile(file);
+    }
+
+    return imageFileFromClipboardHtml(data);
+}
+
+function imageFileFromClipboardHtml(data: DataTransfer): File | null {
+    const html = data.getData("text/html");
+    if (!html) {
+        return null;
+    }
+
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const src = doc.querySelector("img[src^='data:image/']")?.getAttribute("src");
+    return src ? fileFromDataUrl(src) : null;
+}
+
+function fileFromDataUrl(dataUrl: string): File | null {
+    const [header, payload] = dataUrl.split(",", 2);
+    const mime = header.match(/^data:(image\/[-+.\w]+)(;base64)?$/)?.[1];
+    if (!mime || !payload) {
+        return null;
+    }
+
+    try {
+        const binary = header.includes(";base64") ? atob(payload) : decodeURIComponent(payload);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+            bytes[index] = binary.charCodeAt(index);
+        }
+
+        return new File([bytes], `pasted-image-${Date.now()}.${extensionForMime(mime)}`, {
+            type: mime,
+            lastModified: Date.now(),
+        });
+    } catch {
+        return null;
+    }
+}
+
+function namedClipboardFile(file: File): File {
+    if (file.name) {
+        return file;
+    }
+
+    return new File([file], `pasted-image-${Date.now()}.${extensionForMime(file.type)}`, {
+        type: file.type || "image/png",
+        lastModified: file.lastModified || Date.now(),
+    });
+}
+
+function extensionForMime(mime: string): string {
+    switch (mime) {
+        case "image/jpeg":
+            return "jpg";
+        case "image/webp":
+            return "webp";
+        case "image/gif":
+            return "gif";
+        default:
+            return "png";
+    }
+}
+
 async function sendInlineReply(target: HTMLElement): Promise<void> {
     const remoteJid = state.openChatId;
     const composer = target.closest(".thread-inline-compose") as HTMLElement | null;
     const bodyElement = composer?.querySelector<HTMLElement>("[data-inline-body]");
     const body = bodyElement?.innerText.trim() ?? "";
+    const attachment = remoteJid ? inlineAttachments.get(remoteJid) : undefined;
+    const quoted = remoteJid ? inlineQuotedMessages.get(remoteJid) : undefined;
 
-    if (!remoteJid || !body) {
-        showToast("Add a reply first");
+    if (!remoteJid || (!body && !attachment)) {
+        showToast("Add a reply or attachment first");
         return;
     }
 
-    inlineReplyDrafts.delete(remoteJid);
-    if (bodyElement) {
-        bodyElement.innerText = "";
+    if (attachment) {
+        try {
+            showToast("Uploading media");
+            const response = await sendMedia(remoteJid, attachment.file, body, quoted?.key);
+            addMessage({ ...response.message, remoteJid: response.message.remoteJid || remoteJid });
+            clearInlineComposer(remoteJid, bodyElement);
+            pendingThreadScrollBottom = true;
+            focusInlineComposer(remoteJid);
+            render();
+            showToast("Message sent");
+            await loadChats();
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : "Media send failed");
+        }
+        return;
     }
 
-    const temp = makeOptimisticMessage(remoteJid, body);
+    clearInlineComposer(remoteJid, bodyElement);
+    const temp = makeOptimisticMessage(remoteJid, body, quoted);
     addMessage(temp);
     pendingThreadScrollBottom = true;
+    focusInlineComposer(remoteJid);
     render();
 
     try {
-        const response = await sendText(remoteJid, body);
+        const response = await sendText(remoteJid, body, quoted?.key);
         replaceMessage(temp.id, {
             ...response.message,
             remoteJid: response.message.remoteJid || remoteJid,
@@ -1723,6 +2133,12 @@ async function handleMediaFile(input: HTMLInputElement): Promise<void> {
         return;
     }
 
+    if (inlineComposer && state.openChatId) {
+        setInlineAttachment(state.openChatId, file);
+        input.value = "";
+        return;
+    }
+
     try {
         showToast("Uploading media");
         const response = await sendMedia(remoteJid, file, caption);
@@ -1742,7 +2158,7 @@ async function handleMediaFile(input: HTMLInputElement): Promise<void> {
     }
 }
 
-function makeOptimisticMessage(remoteJid: string, text: string): WhatsAppMessage {
+function makeOptimisticMessage(remoteJid: string, text: string, quoted?: WhatsAppMessage): WhatsAppMessage {
     const timestamp = Math.floor(Date.now() / 1000);
     return {
         id: `temp-${timestamp}`,
@@ -1764,6 +2180,7 @@ function makeOptimisticMessage(remoteJid: string, text: string): WhatsAppMessage
             remoteJid,
             fromMe: true,
         },
+        ...(quoted ? { quoted: quotedPreviewFromMessage(quoted) } : {}),
     };
 }
 
@@ -1912,6 +2329,37 @@ async function reactToMessage(messageId: string): Promise<void> {
     render();
 }
 
+async function removeOwnReaction(messageId: string): Promise<void> {
+    const message = currentMessages().find((item) => item.id === messageId);
+    if (!message) {
+        return;
+    }
+
+    const previous = message.reactions ?? [];
+    message.reactions = previous.filter((reaction) => !reaction.fromMe);
+    render();
+
+    try {
+        await sendReaction(message.key, "");
+    } catch (error) {
+        message.reactions = previous;
+        showToast(error instanceof Error ? error.message : "Could not remove reaction");
+        render();
+    }
+}
+
+function quoteMessage(messageId: string): void {
+    const remoteJid = state.openChatId;
+    const message = currentMessages().find((item) => item.id === messageId);
+    if (!remoteJid || !message) {
+        return;
+    }
+
+    inlineQuotedMessages.set(remoteJid, message);
+    focusInlineComposer(remoteJid);
+    render();
+}
+
 async function connectWhatsApp(): Promise<void> {
     try {
         state.connection = await connectInstance();
@@ -2054,10 +2502,31 @@ async function handleAction(target: HTMLElement): Promise<void> {
         case "send-inline-reply":
             await sendInlineReply(target);
             return;
+        case "quote-message":
+            quoteMessage(target.dataset.messageId ?? "");
+            return;
         case "clear-inline-reply": {
             const remoteJid = state.openChatId;
             if (remoteJid) {
-                inlineReplyDrafts.delete(remoteJid);
+                const bodyElement = app.querySelector<HTMLElement>("[data-inline-body]");
+                clearInlineComposer(remoteJid, bodyElement);
+            }
+            render();
+            return;
+        }
+        case "remove-inline-quote": {
+            const remoteJid = state.openChatId;
+            if (remoteJid) {
+                inlineQuotedMessages.delete(remoteJid);
+                focusInlineComposer(remoteJid);
+            }
+            render();
+            return;
+        }
+        case "remove-inline-attachment": {
+            const remoteJid = state.openChatId;
+            if (remoteJid) {
+                clearInlineAttachment(remoteJid);
             }
             render();
             return;
@@ -2101,6 +2570,9 @@ async function handleAction(target: HTMLElement): Promise<void> {
             return;
         case "react-message":
             await reactToMessage(target.dataset.messageId ?? "");
+            return;
+        case "remove-own-reaction":
+            await removeOwnReaction(target.dataset.messageId ?? "");
             return;
         case "toast":
             showToast(target.dataset.message ?? "Action applied visually");
@@ -2166,6 +2638,21 @@ app.addEventListener("input", (event) => {
     }, 100);
 });
 
+app.addEventListener("paste", (event) => {
+    const target = event.target as HTMLElement;
+    if (!target.matches("[data-inline-body]") || !state.openChatId) {
+        return;
+    }
+
+    const image = pastedImageFile(event.clipboardData);
+    if (!image) {
+        return;
+    }
+
+    event.preventDefault();
+    setInlineAttachment(state.openChatId, image);
+});
+
 app.addEventListener("scroll", (event) => {
     const target = event.target as HTMLElement;
     if (
@@ -2209,7 +2696,23 @@ app.addEventListener("error", (event) => {
 
 window.addEventListener("keydown", (event) => {
     const target = event.target as HTMLElement;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a" && target.matches("[data-inline-body]")) {
+        event.preventDefault();
+        selectInlineComposerText(target);
+        return;
+    }
+
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && target.matches("[data-inline-body]")) {
+        event.preventDefault();
+        const composer = target.closest(".thread-inline-compose") as HTMLElement | null;
+        const sendButton = composer?.querySelector<HTMLElement>("[data-action='send-inline-reply']");
+        if (sendButton) {
+            void sendInlineReply(sendButton);
+        }
+        return;
+    }
+
+    if (event.key === "Enter" && !event.shiftKey && target.matches("[data-inline-body]")) {
         event.preventDefault();
         const composer = target.closest(".thread-inline-compose") as HTMLElement | null;
         const sendButton = composer?.querySelector<HTMLElement>("[data-action='send-inline-reply']");

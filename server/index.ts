@@ -126,6 +126,27 @@ function routeParam(value: string | string[] | undefined): string {
     return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
+function parseQuotedMessageKey(value: unknown): WhatsAppMessageKey | undefined {
+    const parsed = typeof value === "string"
+        ? (() => {
+            try {
+                return JSON.parse(value) as unknown;
+            } catch {
+                return undefined;
+            }
+        })()
+        : value;
+    const record = typeof parsed === "object" && parsed ? parsed as Partial<WhatsAppMessageKey> : undefined;
+    return record?.id && record.remoteJid
+        ? {
+            id: String(record.id),
+            remoteJid: String(record.remoteJid),
+            fromMe: Boolean(record.fromMe),
+            ...(record.participant ? { participant: String(record.participant) } : {}),
+        }
+        : undefined;
+}
+
 function asyncHandler<TReq extends Request = Request>(
     handler: (req: TReq, res: Response) => Promise<void>,
 ): (req: Request, res: Response, next: NextFunction) => void {
@@ -134,8 +155,99 @@ function asyncHandler<TReq extends Request = Request>(
     };
 }
 
-function mediaKindFromRequest(value: unknown): "image" | "video" | "audio" | "document" | "sticker" {
-    return value === "image" || value === "video" || value === "audio" || value === "sticker" ? value : "document";
+type IncomingMediaKind = "image" | "video" | "audio" | "document" | "sticker";
+
+function mediaKindFromRequest(value: unknown, fileName = "", mimetype = ""): IncomingMediaKind {
+    if (value === "image" || value === "video" || value === "audio" || value === "sticker") {
+        return value;
+    }
+
+    const mime = mimetype.toLowerCase();
+    const extension = fileName.split(".").pop()?.toLowerCase() ?? "";
+    if (mime.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif"].includes(extension)) {
+        return "image";
+    }
+
+    if (mime.startsWith("video/") || ["mp4", "m4v", "mov", "webm", "mkv", "avi", "3gp", "3g2", "mpeg", "mpg"].includes(extension)) {
+        return "video";
+    }
+
+    if (mime.startsWith("audio/") || ["mp3", "m4a", "aac", "ogg", "oga", "opus", "wav", "flac", "amr"].includes(extension)) {
+        return "audio";
+    }
+
+    return "document";
+}
+
+function mimetypeFromFile(fileName: string, mimetype: string): string {
+    if (mimetype && mimetype !== "application/octet-stream") {
+        return mimetype;
+    }
+
+    switch (fileName.split(".").pop()?.toLowerCase()) {
+        case "mp4":
+        case "m4v":
+            return "video/mp4";
+        case "mov":
+            return "video/quicktime";
+        case "webm":
+            return "video/webm";
+        case "mkv":
+            return "video/x-matroska";
+        case "avi":
+            return "video/x-msvideo";
+        case "3gp":
+        case "3g2":
+            return "video/3gpp";
+        case "mpeg":
+        case "mpg":
+            return "video/mpeg";
+        case "jpg":
+        case "jpeg":
+            return "image/jpeg";
+        case "png":
+            return "image/png";
+        case "webp":
+            return "image/webp";
+        case "gif":
+            return "image/gif";
+        case "heic":
+            return "image/heic";
+        case "heif":
+            return "image/heif";
+        case "mp3":
+            return "audio/mpeg";
+        case "m4a":
+            return "audio/mp4";
+        case "ogg":
+        case "oga":
+        case "opus":
+            return "audio/ogg";
+        case "wav":
+            return "audio/wav";
+        case "flac":
+            return "audio/flac";
+        case "amr":
+            return "audio/amr";
+        default:
+            return mimetype || "application/octet-stream";
+    }
+}
+
+function rawWithDirectMediaPath(raw: WAMessage): WAMessage | null {
+    const cloned = structuredClone(raw) as WAMessage;
+    const message = cloned.message as Record<string, { url?: string; directPath?: string } | undefined> | undefined;
+    const mediaKeys = ["imageMessage", "videoMessage", "audioMessage", "documentMessage", "stickerMessage"];
+
+    for (const key of mediaKeys) {
+        const media = message?.[key];
+        if (media?.directPath && media.url) {
+            media.url = undefined;
+            return cloned;
+        }
+    }
+
+    return null;
 }
 
 function disconnectCode(lastDisconnect: BaileysConnectionState["lastDisconnect"]): number | null {
@@ -577,6 +689,9 @@ class LocalWhatsAppService {
                     this.queueChatHistoryFetch(jid, message);
                 }
             }
+            if (jid.endsWith("@g.us") && message.quoted?.participant && !message.quoted.fromMe && this.isUnresolvedParticipantName(message.quoted.senderName)) {
+                this.queueParticipantResolution(jid, message.quoted.participant);
+            }
             for (const reaction of message.reactions ?? []) {
                 if (!reaction.fromMe && reaction.senderJid) {
                     this.queueContactProfilePictureFetch(reaction.senderJid, jid);
@@ -614,6 +729,30 @@ class LocalWhatsAppService {
         try {
             buffer = Buffer.from(await downloadMediaMessage(raw, "buffer", {}, context));
         } catch (error) {
+            const directPathRaw = rawWithDirectMediaPath(raw);
+            if (directPathRaw) {
+                try {
+                    buffer = Buffer.from(await downloadMediaMessage(directPathRaw, "buffer", {}, context));
+                    raw = directPathRaw;
+                    this.rawMessages.set(keySignature(message.key), raw);
+                    message.raw = raw;
+                    this.queuePersist();
+                } catch {
+                    buffer = Buffer.alloc(0);
+                }
+            } else {
+                buffer = Buffer.alloc(0);
+            }
+
+            if (buffer.length) {
+                return {
+                    buffer,
+                    mimetype: message.media.mimetype || "application/octet-stream",
+                    fileName: message.media.fileName || `${message.id}.${message.media.kind}`,
+                    kind: message.media.kind,
+                };
+            }
+
             if (!socket) {
                 throw error;
             }
@@ -742,12 +881,13 @@ class LocalWhatsAppService {
         };
     }
 
-    public async sendText(remoteJid: string, text: string): Promise<NormalizedMessage> {
+    public async sendText(remoteJid: string, text: string, quoted?: WhatsAppMessageKey): Promise<NormalizedMessage> {
         const socket = this.requireOpenSocket();
         const jid = this.canonicalChatJid(normalizeInputJid(remoteJid));
+        const quotedMessage = quoted ? this.quotedRawMessage(quoted) : undefined;
 
         await socket.sendPresenceUpdate("composing", jid);
-        const result = await socket.sendMessage(jid, { text });
+        const result = await socket.sendMessage(jid, { text }, quotedMessage ? { quoted: quotedMessage } : undefined);
         await socket.sendPresenceUpdate("available", jid);
 
         const saved = this.saveRawMessage(result, false);
@@ -766,9 +906,11 @@ class LocalWhatsAppService {
         mimetype: string;
         fileName?: string;
         caption?: string;
+        quoted?: WhatsAppMessageKey;
     }): Promise<NormalizedMessage> {
         const socket = this.requireOpenSocket();
         const jid = this.canonicalChatJid(normalizeInputJid(input.remoteJid));
+        const quotedMessage = input.quoted ? this.quotedRawMessage(input.quoted) : undefined;
         const content =
             input.mediaKind === "image"
                 ? { image: input.buffer, caption: input.caption || undefined, mimetype: input.mimetype }
@@ -785,7 +927,7 @@ class LocalWhatsAppService {
                             caption: input.caption || undefined,
                         };
 
-        const result = await socket.sendMessage(jid, content);
+        const result = await socket.sendMessage(jid, content, quotedMessage ? { quoted: quotedMessage } : undefined);
         const saved = this.saveRawMessage(result, false);
         if (!saved) {
             throw new Error("WhatsApp did not return a media message payload after send.");
@@ -793,6 +935,40 @@ class LocalWhatsAppService {
 
         this.publishMessagesChanged("messages.upsert");
         return saved;
+    }
+
+    private quotedRawMessage(key: WhatsAppMessageKey): WAMessage | undefined {
+        const direct = this.rawMessages.get(keySignature(key));
+        if (direct) {
+            return direct;
+        }
+
+        const jid = this.canonicalChatJid(normalizeInputJid(key.remoteJid));
+        const message = (this.messages.get(jid) ?? []).find((item) => item.id === key.id);
+        if (message?.raw) {
+            return message.raw as WAMessage;
+        }
+
+        return message ? {
+            key: protoKeyFromNormalized(message.key),
+            message: {
+                conversation: this.quotedFallbackText(message),
+            },
+            messageTimestamp: message.timestamp,
+            pushName: message.senderName,
+        } as WAMessage : undefined;
+    }
+
+    private quotedFallbackText(message: NormalizedMessage): string {
+        if (message.media?.caption) {
+            return message.media.caption;
+        }
+
+        if (message.text && !["Image message", "Video message", "Audio message", "Voice message", "Document message", "Sticker"].includes(message.text)) {
+            return message.text;
+        }
+
+        return message.media?.fileName || message.type || "Message";
     }
 
     public async sendReaction(key: WhatsAppMessageKey, reaction: string): Promise<void> {
@@ -1137,6 +1313,12 @@ class LocalWhatsAppService {
             if (group.subject) {
                 this.applyChatName(chat, group.subject, true);
             }
+            const previousRaw = (chat.raw ?? {}) as {
+                announce?: boolean;
+                restrict?: boolean;
+                memberAddMode?: boolean;
+                joinApprovalMode?: boolean;
+            };
             chat.raw = {
                 ...chat.raw as object,
                 ...group,
@@ -1164,7 +1346,7 @@ class LocalWhatsAppService {
                 }) || changed;
             }
 
-            const settingText = synthesizeSettings ? this.groupSettingActivityText(group) : "";
+            const settingText = synthesizeSettings ? this.groupSettingActivityText(previousRaw, group) : "";
             if (settingText) {
                 changed = this.saveGroupActivity({
                     remoteJid: jid,
@@ -1244,25 +1426,30 @@ class LocalWhatsAppService {
         }
     }
 
-    private groupSettingActivityText(group: {
+    private groupSettingActivityText(previous: {
+        announce?: boolean;
+        restrict?: boolean;
+        memberAddMode?: boolean;
+        joinApprovalMode?: boolean;
+    }, group: {
         announce?: boolean;
         restrict?: boolean;
         memberAddMode?: boolean;
         joinApprovalMode?: boolean;
     }): string {
-        if (typeof group.announce === "boolean") {
+        if (typeof group.announce === "boolean" && typeof previous.announce === "boolean" && group.announce !== previous.announce) {
             return group.announce ? "changed the group so only admins can send messages" : "changed the group so everyone can send messages";
         }
 
-        if (typeof group.restrict === "boolean") {
+        if (typeof group.restrict === "boolean" && typeof previous.restrict === "boolean" && group.restrict !== previous.restrict) {
             return group.restrict ? "changed the group so only admins can edit group info" : "changed the group so everyone can edit group info";
         }
 
-        if (typeof group.memberAddMode === "boolean") {
+        if (typeof group.memberAddMode === "boolean" && typeof previous.memberAddMode === "boolean" && group.memberAddMode !== previous.memberAddMode) {
             return group.memberAddMode ? "allowed participants to add members" : "limited member adds to admins";
         }
 
-        if (typeof group.joinApprovalMode === "boolean") {
+        if (typeof group.joinApprovalMode === "boolean" && typeof previous.joinApprovalMode === "boolean" && group.joinApprovalMode !== previous.joinApprovalMode) {
             return group.joinApprovalMode ? "turned on join approval" : "turned off join approval";
         }
 
@@ -1507,6 +1694,7 @@ class LocalWhatsAppService {
             : (this.messages.get(this.canonicalChatJid(update.jid)) ?? []).map((message) => message.key);
 
         let changed = false;
+        const touchedJids = new Set<string>();
         for (const key of keys) {
             const jid = key.remoteJid ? this.canonicalChatJid(key.remoteJid) : "";
             const messageId = key.id ?? "";
@@ -1515,24 +1703,23 @@ class LocalWhatsAppService {
             }
 
             const list = this.messages.get(jid);
-            const message = list?.find((item) => item.id === messageId);
-            if (!message) {
+            const messageIndex = list?.findIndex((item) => item.id === messageId) ?? -1;
+            if (!list || messageIndex < 0) {
                 continue;
             }
 
-            message.type = "Deleted message";
-            message.text = message.fromMe ? "You deleted this message" : "This message was deleted";
-            message.media = undefined;
-            message.forwarded = undefined;
-            message.forwardingScore = undefined;
-            message.reactions = undefined;
+            const [message] = list.splice(messageIndex, 1);
             this.rawMessages.delete(keySignature(message.key));
-            this.updateChatActivity(jid);
+            touchedJids.add(jid);
             changed = true;
         }
 
         if (!changed) {
             return;
+        }
+
+        for (const jid of touchedJids) {
+            this.updateChatActivity(jid);
         }
 
         this.queuePersist();
@@ -1885,13 +2072,12 @@ class LocalWhatsAppService {
         const latestActivity = current[current.length - 1];
         const latestMessage = [...current].reverse().find((message) => !message.activityOnly);
 
-        if (latestMessage) {
-            chat.lastMessage = latestMessage;
-        }
-
-        if (latestActivity) {
-            chat.lastActivity = latestActivity;
-            chat.timestamp = Math.max(chat.timestamp ?? 0, latestActivity.timestamp);
+        chat.lastMessage = latestMessage;
+        chat.lastActivity = latestActivity;
+        chat.timestamp = latestActivity?.timestamp ?? 0;
+        if (!jid.endsWith("@g.us")) {
+            chat.metadataTimestamp = chat.timestamp;
+        } else if (latestActivity) {
             chat.metadataTimestamp = Math.max(chat.metadataTimestamp ?? 0, latestActivity.timestamp);
         }
     }
@@ -2022,13 +2208,24 @@ class LocalWhatsAppService {
         return [...new Set([jid, ...(contact ? this.contactAliases(contact) : [])].filter(Boolean))];
     }
 
-    private isHiddenMessage(message: Pick<NormalizedMessage, "type"> | undefined | null): boolean {
+    private isHiddenMessage(message: Pick<NormalizedMessage, "id" | "text" | "type"> | undefined | null): boolean {
         const type = message?.type;
         return type === "Reaction"
             || type === "associatedChild"
             || type === "associatedChildMessage"
             || type === "album"
-            || type === "albumMessage";
+            || type === "albumMessage"
+            || this.isSyntheticGroupSettingsActivity(message);
+    }
+
+    private isSyntheticGroupSettingsActivity(message: Pick<NormalizedMessage, "id" | "text" | "type"> | undefined | null): boolean {
+        if (!message || message.type !== "Group activity") {
+            return false;
+        }
+
+        return message.id.includes(":settings:")
+            || /\bchanged the group so (only admins|everyone) can (send messages|edit group info)\b/i.test(message.text)
+            || /\b(allowed participants to add members|limited member adds to admins|turned on join approval|turned off join approval)\b/i.test(message.text);
     }
 
     private removeHiddenActivity(chat: LocalChatProjection): void {
@@ -2179,6 +2376,10 @@ class LocalWhatsAppService {
             ...message,
             remoteJid,
             raw: normalizedRaw ?? message.raw,
+            quoted: message.quoted ? {
+                ...message.quoted,
+                remoteJid: message.quoted.remoteJid === message.remoteJid ? remoteJid : message.quoted.remoteJid,
+            } : undefined,
             key: {
                 ...message.key,
                 remoteJid,
@@ -2191,6 +2392,7 @@ class LocalWhatsAppService {
             ...existing,
             ...incoming,
             media: incoming.media ?? existing.media,
+            quoted: incoming.quoted ?? existing.quoted,
             reactions: incoming.reactions ?? existing.reactions,
             receipt: incoming.receipt ?? existing.receipt,
             raw: incoming.raw ?? existing.raw,
@@ -2250,23 +2452,42 @@ class LocalWhatsAppService {
     }
 
     private messageWithResolvedSender(message: NormalizedMessage, remoteJid: string, chat?: LocalChatProjection): NormalizedMessage {
+        const rawQuoted = !message.quoted && message.raw
+            ? normalizeWAMessage(message.raw as WAMessage, this.snapshot.ownerJid ?? "")?.quoted
+            : undefined;
+        const hydratedMessage = rawQuoted ? { ...message, quoted: rawQuoted } : message;
         const jid = stripDeviceSuffix(remoteJid);
-        const senderJid = message.fromMe ? this.snapshot.ownerJid ?? "" : message.participant ?? (jid.endsWith("@g.us") ? "" : jid);
-        const senderName = message.fromMe
+        const senderJid = hydratedMessage.fromMe ? this.snapshot.ownerJid ?? "" : hydratedMessage.participant ?? (jid.endsWith("@g.us") ? "" : jid);
+        const senderName = hydratedMessage.fromMe
             ? "me"
             : jid.endsWith("@g.us")
-              ? this.groupDisplayNameForJid(senderJid, message.senderName)
-              : chat?.name ?? this.displayNameForJid(jid, message.senderName);
+              ? this.groupDisplayNameForJid(senderJid, hydratedMessage.senderName)
+              : chat?.name ?? this.displayNameForJid(jid, hydratedMessage.senderName);
+        const quotedParticipant = hydratedMessage.quoted?.participant ?? "";
+        const quotedSenderJid = hydratedMessage.quoted?.fromMe
+            ? this.snapshot.ownerJid ?? ""
+            : quotedParticipant || (!jid.endsWith("@g.us") ? jid : "");
+        const quotedSenderName = hydratedMessage.quoted
+            ? hydratedMessage.quoted.fromMe
+                ? "me"
+                : jid.endsWith("@g.us")
+                  ? this.groupDisplayNameForJid(quotedSenderJid, hydratedMessage.quoted.senderName)
+                  : this.displayNameForJid(quotedSenderJid || jid, hydratedMessage.quoted.senderName)
+            : undefined;
 
         return withMessageReceipt({
-            ...message,
+            ...hydratedMessage,
             senderName,
             senderProfilePicUrl: this.profilePictureUrlForJid(senderJid),
-            media: message.media ? {
-                ...message.media,
-                url: `/api/media/${encodeURIComponent(jid)}/${encodeURIComponent(message.id)}`,
+            media: hydratedMessage.media ? {
+                ...hydratedMessage.media,
+                url: `/api/media/${encodeURIComponent(jid)}/${encodeURIComponent(hydratedMessage.id)}`,
             } : undefined,
-            reactions: message.reactions?.map((reaction) => ({
+            quoted: hydratedMessage.quoted ? {
+                ...hydratedMessage.quoted,
+                senderName: quotedSenderName,
+            } : undefined,
+            reactions: hydratedMessage.reactions?.map((reaction) => ({
                 ...reaction,
                 senderName: reaction.fromMe
                     ? "me"
@@ -2856,7 +3077,7 @@ const app = express();
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 50 * 1024 * 1024,
+        fileSize: 256 * 1024 * 1024,
     },
 });
 const hub = new SseHub();
@@ -2971,11 +3192,12 @@ app.get("/api/media/:remoteJid/:messageId", asyncHandler(async (req, res) => {
 app.post("/api/messages/text", asyncHandler(async (req, res) => {
     const remoteJid = String(req.body?.remoteJid ?? "");
     const text = String(req.body?.text ?? "").trim();
+    const quoted = parseQuotedMessageKey(req.body?.quoted);
     if (!remoteJid || !text) {
         throw new HttpError(400, "remoteJid and text are required.");
     }
 
-    const message = await whatsapp.sendText(remoteJid, text);
+    const message = await whatsapp.sendText(remoteJid, text, quoted);
     res.status(201).json({ message });
 }));
 
@@ -2985,13 +3207,17 @@ app.post("/api/messages/media", upload.single("file"), asyncHandler(async (req, 
         throw new HttpError(400, "remoteJid and file are required.");
     }
 
+    const fileName = String(req.body?.fileName || req.file.originalname || "attachment");
+    const mimetype = mimetypeFromFile(fileName, req.file.mimetype || "application/octet-stream");
+    const quoted = parseQuotedMessageKey(req.body?.quoted);
     const message = await whatsapp.sendMedia({
         remoteJid,
-        mediaKind: mediaKindFromRequest(req.body?.mediatype),
+        mediaKind: mediaKindFromRequest(req.body?.mediatype, fileName, mimetype),
         buffer: req.file.buffer,
-        mimetype: req.file.mimetype || "application/octet-stream",
-        fileName: String(req.body?.fileName || req.file.originalname || "attachment"),
+        mimetype,
+        fileName,
         caption: typeof req.body?.caption === "string" ? req.body.caption : undefined,
+        quoted,
     });
     res.status(201).json({ message });
 }));
@@ -3032,8 +3258,14 @@ app.use((error: unknown, req: Request, res: Response, next: NextFunction) => {
         return;
     }
 
-    const status = error instanceof HttpError ? error.status : 500;
-    const message = error instanceof Error ? error.message : "Unexpected server error";
+    const multerError = typeof error === "object" && error !== null && "code" in error
+        ? error as { code?: unknown; message?: unknown }
+        : null;
+    const uploadTooLarge = multerError?.code === "LIMIT_FILE_SIZE";
+    const status = uploadTooLarge ? 413 : error instanceof HttpError ? error.status : 500;
+    const message = uploadTooLarge
+        ? "Attachment is too large. Keep videos under 256 MB."
+        : error instanceof Error ? error.message : "Unexpected server error";
     res.status(status).json({
         error: true,
         message,
