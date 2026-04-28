@@ -17,3 +17,6 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .playwright-cli/
+
+actual-gmail.png
+update-gmail.png
