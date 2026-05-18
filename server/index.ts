@@ -3273,11 +3273,20 @@ app.use((error: unknown, req: Request, res: Response, next: NextFunction) => {
     });
 });
 
-void whatsapp.boot().catch((error) => {
-    console.warn("Could not auto-start WhatsApp session:", error instanceof Error ? error.message : error);
-});
-
-app.listen(config.port, config.host, () => {
+const server = app.listen(config.port, config.host, () => {
     console.log(`WhatsappMail local server listening on http://${config.host}:${config.port}`);
     console.log(`Local WhatsApp auth data: ${config.authDir}`);
+    void whatsapp.boot().catch((error) => {
+        console.warn("Could not auto-start WhatsApp session:", error instanceof Error ? error.message : error);
+    });
+});
+
+server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+        console.error(`WhatsappMail local server could not start because http://${config.host}:${config.port} is already in use.`);
+        process.exitCode = 1;
+        return;
+    }
+
+    throw error;
 });
